@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGIS - Plantios e Áreas</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; }
+        #header { padding: 15px; background: #2c3e50; color: white; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 1000; }
+        #header h2 { margin: 0; font-size: 24px; }
+        #main { display: flex; flex: 1; height: calc(100% - 60px); }
+        #map { flex: 2; height: 100%; }
+        #sidebar { flex: 1; padding: 20px; box-sizing: border-box; overflow-y: auto; background: #ecf0f1; border-left: 2px solid #bdc3c7; min-width: 350px; }
+        .chart-container { width: 100%; height: 280px; margin-bottom: 30px; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h3 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 5px; margin-top: 0; }
+        .info-box { background: #fff; padding: 10px; border-radius: 5px; font-size: 13px; color: #7f8c8d; margin-top: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .leaflet-tooltip.city-label {
+            background: none; border: none; box-shadow: none; font-size: 12px; font-weight: bold; color: #444;
+            text-shadow: 1px 1px 2px #fff, -1px -1px 2px #fff, 1px -1px 2px #fff, -1px 1px 2px #fff;
+            display: none;
+        }
+        .map-zoomed-in .leaflet-tooltip.city-label { display: block; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h2>Painel WebGIS - Gestão de Plantios</h2>
+    </div>
+    <div id="main">
+        <div id="map"></div>
+        <div id="sidebar">
+            <h3>Gráficos Dinâmicos (Plantios)</h3>
+            
+            <div class="chart-container">
+                <canvas id="chartStatus"></canvas>
+            </div>
+            
+            <div class="chart-container">
+                <canvas id="chartAreaTipo"></canvas>
+            </div>
+
+            <div class="info-box">
+                <p><strong>Dica de Navegação:</strong> Clique nos pontos laranja no mapa para ver os detalhes de cada plantio.</p>
+                <p><strong>Nota sobre Mapa de Fundo:</strong> Foi incluída a imagem de satélite de alta resolução da Esri e OpenStreetMap.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        // Inicializar mapa (focado no estado de SP aproximadamente)
+        var map = L.map('map').setView([-23.5, -46.5], 7);
+
+        // 1. OpenStreetMap
+        var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap contributors'
+        });
+
+        // 2. Imagem de Alta Resolução (Esri World Imagery)
+        var esriImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 19,
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+        });
+
+        // Adiciona OSM por padrão
+        esriImagery.addTo(map);
+
+        // Controles de Camada (Basemaps)
+        var baseMaps = {
+            "Imagem de Alta Resolução (Esri)": esriImagery,
+            "OpenStreetMap": osm
+        };
+
+        var overlayMaps = {};
+        var layerControl = L.control.layers(baseMaps, overlayMaps, {collapsed: false}).addTo(map);
+
+        // Controle de zoom para exibir labels
+        map.on('zoomend', function() {
+            if (map.getZoom() >= 11) {
+                document.getElementById('map').classList.add('map-zoomed-in');
+            } else {
+                document.getElementById('map').classList.remove('map-zoomed-in');
+            }
+        });
+        if (map.getZoom() >= 11) document.getElementById('map').classList.add('map-zoomed-in');
+
+        // Gerenciamento de Cores para o "tipo"
+        var baseColors = ['#1abc9c', '#f1c40f', '#e74c3c', '#9b59b6', '#34495e', '#e67e22'];
+        var tipoColors = {};
+        function getTipoColor(tipo) {
+            tipo = tipo ? tipo.trim() : "Outro";
+            if (!tipoColors[tipo]) {
+                tipoColors[tipo] = baseColors[Object.keys(tipoColors).length % baseColors.length];
+            }
+            return tipoColors[tipo];
+        }
+
+        // Função Genérica para carregar GeoJSON
+        async function loadGeoJSON(url, style, onEachFeature, layerName, visibleByDefault) {
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                var layer = L.geoJSON(data, {
+                    style: style,
+                    onEachFeature: function(feature, layer) {
+                        if (onEachFeature) onEachFeature(feature, layer);
+                        if (layerName === 'Municípios SP' && feature.properties.NM_MUN) {
+                            layer.bindTooltip(feature.properties.NM_MUN, {
+                                permanent: true,
+                                direction: 'center',
+                                className: 'city-label',
+                                interactive: false
+                            });
+                        }
+                    },
+                    pointToLayer: function(feature, latlng) {
+                        if (feature.geometry && feature.geometry.type === "Point") {
+                            return L.circleMarker(latlng, style(feature));
+                        }
+                    }
+                });
+                
+                layerControl.addOverlay(layer, layerName);
+                if (visibleByDefault) {
+                    layer.addTo(map);
+                }
+                return layer;
+            } catch (e) {
+                console.error("Erro ao carregar " + url, e);
+            }
+        }
+
+        // Estilos
+        var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
+        var styleArea = { color: "#27ae60", weight: 2, fillOpacity: 0.4, interactive: false };
+        var stylePlantios = function(feature) {
+            var tipo = feature.properties.tipo;
+            return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
+        };
+
+        // Popups para Plantios
+        function popupPlantios(feature, layer) {
+            if (feature.properties) {
+                var p = feature.properties;
+                var content = "<div style='font-size:13px;'>" +
+                              "<b>Nome:</b> " + (p.nome || "-") + "<br/>" +
+                              "<b>Município:</b> " + (p.Municipio || "-") + "<br/>" +
+                              "<b>Tipo:</b> " + (p.tipo || "-") + "<br/>" +
+                              "<b>Status:</b> " + (p.Status_con || "-") + "<br/>" +
+                              "<b>Área (ha):</b> " + (p.area_ha || "-") + "<br/>" +
+                              "<b>Mudas:</b> " + (p.mudas || "-") +
+                              "</div>";
+                layer.bindPopup(content);
+            }
+        }
+
+        // Carregar SP_municipios
+        loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
+        
+        // Carregar Áreas
+        loadGeoJSON('area.geojson', styleArea, null, 'Polígonos de Área', true);
+
+        // Carregar Plantios e Inicializar Gráficos
+        fetch('plantios.geojson')
+            .then(res => res.json())
+            .then(data => {
+                var layerPlantios = L.geoJSON(data, {
+                    pointToLayer: function(feature, latlng) {
+                        return L.circleMarker(latlng, stylePlantios(feature));
+                    },
+                    onEachFeature: popupPlantios
+                });
+                
+                layerControl.addOverlay(layerPlantios, "Pontos de Plantio");
+                layerPlantios.addTo(map);
+
+                // Centralizar mapa nos plantios
+                map.fitBounds(layerPlantios.getBounds());
+
+                // Chamar função de gráficos
+                gerarGraficos(data.features);
+            }).catch(e => {
+                console.error("Erro ao carregar plantios.geojson", e);
+                document.getElementById('sidebar').innerHTML += "<p style='color:red'>Erro ao carregar os dados. Certifique-se de acessar via servidor web (localhost).</p>";
+            });
+
+        // Gráficos Dinâmicos com Chart.js
+        function gerarGraficos(features) {
+            let statusCount = {};
+            let tipoArea = {};
+
+            // Agregar dados
+            features.forEach(f => {
+                let p = f.properties;
+                let status = p.Status_con ? p.Status_con.trim() : "Não informado";
+                let tipo = p.tipo ? p.tipo.trim() : "Outro";
+                let area = parseFloat(p.area_ha) || 0;
+
+                // Capitalizar status para padronizar "À contratar" vs "À CONTRATAR" etc (se houver)
+                status = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+
+                statusCount[status] = (statusCount[status] || 0) + 1;
+                tipoArea[tipo] = (tipoArea[tipo] || 0) + area;
+            });
+
+            // Gráfico 1: Quantidade por Status (Bar Chart)
+            new Chart(document.getElementById('chartStatus'), {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(statusCount),
+                    datasets: [{
+                        label: 'Número de Plantios',
+                        data: Object.values(statusCount),
+                        backgroundColor: '#3498db',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: { display: true, text: 'Status dos Contratos' },
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, ticks: { stepSize: 1 } }
+                    }
+                }
+            });
+
+            // Gráfico 2: Área por Tipo (Doughnut Chart)
+            let labelsTipo = Object.keys(tipoArea);
+            let backgroundColorsTipo = labelsTipo.map(tipo => getTipoColor(tipo));
+
+            new Chart(document.getElementById('chartAreaTipo'), {
+                type: 'doughnut',
+                data: {
+                    labels: labelsTipo,
+                    datasets: [{
+                        data: Object.values(tipoArea),
+                        backgroundColor: backgroundColorsTipo
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: { display: true, text: 'Área Total (ha) por Tipo' },
+                        legend: { position: 'right' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.label || '';
+                                    if (label) { label += ': '; }
+                                    label += context.parsed.toFixed(2) + ' ha';
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
