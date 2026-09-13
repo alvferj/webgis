@@ -13,7 +13,7 @@
         #main { display: flex; flex: 1; height: calc(100% - 60px); }
         #map { flex: 2; height: 100%; }
         #sidebar { flex: 1; padding: 20px; box-sizing: border-box; overflow-y: auto; background: #ecf0f1; border-left: 2px solid #bdc3c7; min-width: 350px; }
-        .chart-container { width: 100%; height: 280px; margin-bottom: 30px; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .chart-container { width: 100%; height: 180px; margin-bottom: 15px; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         h3 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 5px; margin-top: 0; }
         .info-box { background: #fff; padding: 10px; border-radius: 5px; font-size: 13px; color: #7f8c8d; margin-top: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .leaflet-tooltip.city-label {
@@ -39,6 +39,10 @@
             
             <div class="chart-container">
                 <canvas id="chartAreaTipo"></canvas>
+            </div>
+
+            <div class="chart-container">
+                <canvas id="chartContratada"></canvas>
             </div>
 
             <div class="info-box">
@@ -240,8 +244,8 @@
         // Carregar Áreas dinamicamente
         loadGeoJSON('area.geojson', styleArea, null, 'Polígonos de Área', false).then(layer => {
             layerAreaRef = layer;
-            // Configurar NDVI WMS (Sem BoundaryCanvas para evitar falha de CORS ou bloqueio no WMS)
-            var wmsUrl = 'https://services.sentinel-hub.com/ogc/wms/42924c6c-257a-4d04-9b8e-363875146af8';
+            // Configurar NDVI WMS (Usando Copernicus Data Space)
+            var wmsUrl = 'https://sh.dataspace.copernicus.eu/ogc/wms/a91f72b5-f9d9-4320-b6c2-4ba3c69ba745';
             layerNdviRef = L.tileLayer.wms(wmsUrl, {
                 layers: 'NDVI',
                 format: 'image/png',
@@ -262,24 +266,35 @@
             div.style.border = '2px solid #ccc';
             div.style.borderRadius = '5px';
             div.style.fontSize = '12px';
-            div.innerHTML = '<b>Ver NDVI por Data:</b><br/>' +
-                            '<input type="date" id="s2-date" value="2023-01-01" style="margin-top:5px; padding:3px;"/>' +
-                            '<button id="update-date" style="margin-left:5px; padding:3px; cursor:pointer;">Aplicar</button>';
+            
+            var title = L.DomUtil.create('b', '', div);
+            title.innerHTML = 'Ver NDVI por Data:<br/>';
+            
+            var input = L.DomUtil.create('input', '', div);
+            input.type = 'date';
+            input.value = '2024-01-01';
+            input.style.marginTop = '5px';
+            input.style.padding = '3px';
+            
+            var btn = L.DomUtil.create('button', '', div);
+            btn.innerHTML = 'Aplicar';
+            btn.style.marginLeft = '5px';
+            btn.style.padding = '3px';
+            btn.style.cursor = 'pointer';
+            
+            btn.onclick = function() {
+                var selectedDate = input.value;
+                if (layerNdviRef) {
+                    // Atualiza o parâmetro TIME da requisição WMS
+                    layerNdviRef.setParams({time: selectedDate}, false);
+                }
+            };
             
             // Impede cliques de passarem pro mapa
             L.DomEvent.disableClickPropagation(div);
             return div;
         };
         dateSliceControl.addTo(map);
-
-        // Ação do slice (Time)
-        document.getElementById('update-date').onclick = function() {
-            var selectedDate = document.getElementById('s2-date').value;
-            if (layerNdviRef) {
-                // Atualiza o parâmetro TIME da requisição WMS (Pode ser range ou single date)
-                layerNdviRef.setParams({time: selectedDate + "/" + selectedDate}, false);
-            }
-        };
 
         // Carregar Plantios e Inicializar Gráficos
         fetch('plantios.geojson')
@@ -311,6 +326,7 @@
         function gerarGraficos(features) {
             let statusCount = {};
             let tipoArea = {};
+            let contratadaArea = {};
 
             // Agregar dados
             features.forEach(f => {
@@ -318,12 +334,16 @@
                 let status = p.Status_con ? p.Status_con.trim() : "Não informado";
                 let tipo = p.tipo ? p.tipo.trim() : "Outro";
                 let area = parseFloat(p.area_ha) || 0;
+                let contratada = p.Contratada || p.contratada;
+                contratada = contratada ? contratada.trim() : "Não informada";
+                if (contratada === "" || contratada === "-") contratada = "Não informada";
 
                 // Capitalizar status para padronizar "À contratar" vs "À CONTRATAR" etc (se houver)
                 status = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
 
                 statusCount[status] = (statusCount[status] || 0) + 1;
                 tipoArea[tipo] = (tipoArea[tipo] || 0) + area;
+                contratadaArea[contratada] = (contratadaArea[contratada] || 0) + area;
             });
 
             // Gráfico 1: Quantidade por Status (Bar Chart)
@@ -380,6 +400,31 @@
                                 }
                             }
                         }
+                    }
+                }
+            });
+
+            // Gráfico 3: Área por Contratada (Bar Chart)
+            new Chart(document.getElementById('chartContratada'), {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(contratadaArea),
+                    datasets: [{
+                        label: 'Área (ha)',
+                        data: Object.values(contratadaArea),
+                        backgroundColor: '#2ecc71',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: { display: true, text: 'Hectares por Contratada' },
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, title: { display: true, text: 'ha' } }
                     }
                 }
             });
