@@ -50,6 +50,7 @@
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/aparshin/leaflet-boundary-canvas@1.0.0/src/BoundaryCanvas.js"></script>
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
@@ -81,15 +82,7 @@
         var overlayMaps = {};
         var layerControl = L.control.layers(baseMaps, overlayMaps, {collapsed: false}).addTo(map);
 
-        // Controle de zoom para exibir labels
-        map.on('zoomend', function() {
-            if (map.getZoom() >= 11) {
-                document.getElementById('map').classList.add('map-zoomed-in');
-            } else {
-                document.getElementById('map').classList.remove('map-zoomed-in');
-            }
-        });
-        if (map.getZoom() >= 11) document.getElementById('map').classList.add('map-zoomed-in');
+
 
         // Gerenciamento de Cores para o "tipo"
         var baseColors = ['#1abc9c', '#f1c40f', '#e74c3c', '#9b59b6', '#34495e', '#e67e22'];
@@ -139,7 +132,7 @@
 
         // Estilos
         var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
-        var styleArea = { color: "#27ae60", weight: 2, fillOpacity: 0.4, interactive: false };
+        var styleArea = { color: "yellow", weight: 2, fillOpacity: 0, interactive: false };
         var stylePlantios = function(feature) {
             var tipo = feature.properties.tipo;
             return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
@@ -149,23 +142,144 @@
         function popupPlantios(feature, layer) {
             if (feature.properties) {
                 var p = feature.properties;
-                var content = "<div style='font-size:13px;'>" +
-                              "<b>Nome:</b> " + (p.nome || "-") + "<br/>" +
-                              "<b>Município:</b> " + (p.Municipio || "-") + "<br/>" +
-                              "<b>Tipo:</b> " + (p.tipo || "-") + "<br/>" +
-                              "<b>Status:</b> " + (p.Status_con || "-") + "<br/>" +
-                              "<b>Área (ha):</b> " + (p.area_ha || "-") + "<br/>" +
-                              "<b>Mudas:</b> " + (p.mudas || "-") +
-                              "</div>";
+                var content = "<div style='font-size:13px; max-height: 250px; overflow-y: auto;'>";
+                for (var key in p) {
+                    var val = p[key];
+                    if (val !== null && val !== "" && val !== " ") {
+                        if (typeof val === 'string' && val.startsWith('http')) {
+                            val = "<a href='" + val + "' target='_blank'>Acessar Link</a>";
+                        }
+                        content += "<b>" + key + ":</b> " + val + "<br/>";
+                    }
+                }
+                content += "</div>";
                 layer.bindPopup(content);
             }
         }
 
+        // Botão Home
+        var homeControl = L.control({position: 'topleft'});
+        homeControl.onAdd = function(map) {
+            var btn = L.DomUtil.create('button', 'home-button');
+            btn.innerHTML = '🏠 Home';
+            btn.title = 'Voltar para a visão geral';
+            btn.style.padding = '5px 10px';
+            btn.style.cursor = 'pointer';
+            btn.style.background = 'white';
+            btn.style.border = '2px solid rgba(0,0,0,0.2)';
+            btn.style.borderRadius = '4px';
+            btn.style.fontWeight = 'bold';
+            btn.onclick = function() {
+                if (window.homeBounds) map.fitBounds(window.homeBounds);
+            }
+            return btn;
+        };
+        homeControl.addTo(map);
+
+        // Display de Escala
+        L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
+
+        // Display do Zoom Atual
+        var zoomScaleControl = L.control({position: 'bottomleft'});
+        zoomScaleControl.onAdd = function(map) {
+            var div = L.DomUtil.create('div', 'zoom-scale-info');
+            div.style.background = 'rgba(255, 255, 255, 0.8)';
+            div.style.padding = '5px 10px';
+            div.style.border = '1px solid #ccc';
+            div.style.borderRadius = '4px';
+            div.style.fontWeight = 'bold';
+            div.style.fontSize = '12px';
+            div.innerHTML = 'Zoom: ' + map.getZoom();
+            return div;
+        };
+        var zoomScaleDiv = zoomScaleControl.addTo(map).getContainer();
+
+        // Variáveis para as áreas e NDVI
+        var layerAreaRef = null;
+        var layerNdviRef = null;
+        var areaThresholdZoom = 13; // aprox 1:100.000
+
+        function checkAreaVisibility() {
+            var currentZoom = map.getZoom();
+            // Atualiza texto do zoom scale info
+            if (zoomScaleDiv) {
+                var zoomText = 'Zoom: ' + currentZoom;
+                if (currentZoom >= areaThresholdZoom) {
+                    zoomText += ' (Escala: Área/NDVI Visíveis)';
+                } else {
+                    zoomText += ' (Aproxime até o zoom ' + areaThresholdZoom + ' para Áreas/NDVI)';
+                }
+                zoomScaleDiv.innerHTML = zoomText;
+            }
+
+            if (currentZoom >= areaThresholdZoom) {
+                if (layerAreaRef && !map.hasLayer(layerAreaRef)) map.addLayer(layerAreaRef);
+                if (layerNdviRef && !map.hasLayer(layerNdviRef)) map.addLayer(layerNdviRef);
+            } else {
+                if (layerAreaRef && map.hasLayer(layerAreaRef)) map.removeLayer(layerAreaRef);
+                if (layerNdviRef && map.hasLayer(layerNdviRef)) map.removeLayer(layerNdviRef);
+            }
+        }
+
+        // Ligar no evento de zoomend (também para os tooltips)
+        map.on('zoomend', function() {
+            if (map.getZoom() >= 11) {
+                document.getElementById('map').classList.add('map-zoomed-in');
+            } else {
+                document.getElementById('map').classList.remove('map-zoomed-in');
+            }
+            checkAreaVisibility();
+        });
+
+        // Inicializar css classes
+        if (map.getZoom() >= 11) document.getElementById('map').classList.add('map-zoomed-in');
+
         // Carregar SP_municipios
         loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
         
-        // Carregar Áreas
-        loadGeoJSON('area.geojson', styleArea, null, 'Polígonos de Área', true);
+        // Carregar Áreas dinamicamente
+        loadGeoJSON('area.geojson', styleArea, null, 'Polígonos de Área', false).then(layer => {
+            layerAreaRef = layer;
+            // Configurar NDVI WMS (Sem BoundaryCanvas para evitar falha de CORS ou bloqueio no WMS)
+            var wmsUrl = 'https://services.sentinel-hub.com/ogc/wms/42924c6c-257a-4d04-9b8e-363875146af8';
+            layerNdviRef = L.tileLayer.wms(wmsUrl, {
+                layers: 'NDVI',
+                format: 'image/png',
+                transparent: true,
+                attribution: 'Copernicus Sentinel Data (NDVI)',
+                maxZoom: 19
+            });
+            layerControl.addOverlay(layerNdviRef, "Sentinel-2 NDVI");
+            checkAreaVisibility();
+        });
+
+        // Ferramenta de Slice (Datas) para Sentinel-2 NDVI
+        var dateSliceControl = L.control({position: 'topright'});
+        dateSliceControl.onAdd = function(map) {
+            var div = L.DomUtil.create('div', 'slice-control');
+            div.style.background = 'rgba(255, 255, 255, 0.9)';
+            div.style.padding = '10px';
+            div.style.border = '2px solid #ccc';
+            div.style.borderRadius = '5px';
+            div.style.fontSize = '12px';
+            div.innerHTML = '<b>Ver NDVI por Data:</b><br/>' +
+                            '<input type="date" id="s2-date" value="2023-01-01" style="margin-top:5px; padding:3px;"/>' +
+                            '<button id="update-date" style="margin-left:5px; padding:3px; cursor:pointer;">Aplicar</button>';
+            
+            // Impede cliques de passarem pro mapa
+            L.DomEvent.disableClickPropagation(div);
+            return div;
+        };
+        dateSliceControl.addTo(map);
+
+        // Ação do slice (Time)
+        document.getElementById('update-date').onclick = function() {
+            var selectedDate = document.getElementById('s2-date').value;
+            if (layerNdviRef) {
+                // Atualiza o parâmetro TIME da requisição WMS (Pode ser range ou single date)
+                layerNdviRef.setParams({time: selectedDate + "/" + selectedDate}, false);
+            }
+        };
 
         // Carregar Plantios e Inicializar Gráficos
         fetch('plantios.geojson')
@@ -182,7 +296,9 @@
                 layerPlantios.addTo(map);
 
                 // Centralizar mapa nos plantios
-                map.fitBounds(layerPlantios.getBounds());
+                window.homeBounds = layerPlantios.getBounds();
+                map.fitBounds(window.homeBounds);
+                checkAreaVisibility();
 
                 // Chamar função de gráficos
                 gerarGraficos(data.features);
