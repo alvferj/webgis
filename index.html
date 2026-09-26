@@ -113,7 +113,7 @@
 
             <div class="info-box">
                 <p><strong>Dica de Navegação:</strong> Clique nos pontos no mapa para ver os detalhes de cada plantio.</p>
-                <p><strong>Nota sobre NDVI/NDWI:</strong> O visualizador de imagens e o gráfico SATVEG utilizam a API do Copernicus/Sentinel Hub. Se as imagens ficarem cinzas ou exibirem avisos, o limite diário gratuito pode ter sido atingido.</p>
+                <p><strong>Nota sobre NDVI/NDWI:</strong> O visualizador de imagens e o gráfico SATVEG utilizam a API do Copernicus/Sentinel Hub.</p>
                 <p><strong>Nota sobre Mapa de Fundo:</strong> Inclui imagens de alta resolução da Esri e OpenStreetMap.</p>
             </div>
         </div>
@@ -121,7 +121,6 @@
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/aparshin/leaflet-boundary-canvas@1.0.0/src/BoundaryCanvas.js"></script>
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
@@ -138,7 +137,7 @@
         // 2. Camada Esri World Imagery
         var esriImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             maxZoom: 19,
-            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+            attribution: 'Tiles &copy; Esri'
         });
 
         esriImagery.addTo(map);
@@ -200,7 +199,7 @@
 
         // Estilos
         var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
-        var styleArea = { color: "yellow", weight: 2, fillOpacity: 0, interactive: true };
+        var styleArea = { color: "yellow", weight: 2.5, fillOpacity: 0.1, interactive: true };
         var stylePlantios = function(feature) {
             var tipo = feature.properties.tipo;
             return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
@@ -371,13 +370,12 @@
         loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', false).then(layer => {
             if (!layer) return;
             layerAreaRef = layer;
-            var geojsonObj = layer.toGeoJSON();
             
             var wmsUrl = 'https://sh.dataspace.copernicus.eu/ogc/wms/c84521b3-83d8-4067-9a07-9e207be4ef80'; 
             var initialTimeRange = '2024-01-01/2024-06-01';
 
-            // Camada 1: NDVI Padrão
-            var rawNdviLayer = L.tileLayer.wms(wmsUrl, {
+            // 1. Camada NDVI
+            layerNdviRef = L.tileLayer.wms(wmsUrl, {
                 layers: 'NDVI', 
                 format: 'image/png', 
                 transparent: true, 
@@ -386,8 +384,8 @@
                 attribution: 'Sentinel-2 (NDVI)'
             });
             
-            // Camada 2: NDWI Padrão
-            var rawNdwiLayer = L.tileLayer.wms(wmsUrl, {
+            // 2. Camada NDWI
+            layerNdwiRef = L.tileLayer.wms(wmsUrl, {
                 layers: 'NDWI', 
                 format: 'image/png', 
                 transparent: true, 
@@ -396,7 +394,7 @@
                 attribution: 'Sentinel-2 (NDWI)'
             });
 
-            // Camada 3: Script Personalizado (Evalscript V3)
+            // 3. Evalscript V3 para Classificação (Sem quebra de URL)
             var evalscriptCode = `//VERSION=3
 function setup() {
   return {
@@ -413,20 +411,16 @@ function evaluatePixel(sample) {
   let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
   let ndwi = (sample.B03 - sample.B08) / (sample.B03 + sample.B08);
 
-  // Regra de Classificação:
-  // Verde brillante se a vegetação for densa e úmida
-  // Vermelho para áreas estressadas ou solo exposto
   if (ndvi > 0.4 && ndwi > 0.1) {
-    return [0.0, 0.8, 0.2, 0.9];
+    return [0.0, 0.8, 0.2, 0.85]; // Verde Brilhante (Saudável)
   } else {
-    return [0.9, 0.1, 0.1, 0.9];
+    return [0.9, 0.1, 0.1, 0.85]; // Vermelho (Estresse)
   }
 }`;
 
-            // Conversão segura UTF-8 para Base64
             var evalscriptBase64 = btoa(unescape(encodeURIComponent(evalscriptCode)));
 
-            var rawClassLayer = L.tileLayer.wms(wmsUrl, {
+            layerClassRef = L.tileLayer.wms(wmsUrl, {
                 layers: 'CUSTOM',
                 EVALSCRIPT64: evalscriptBase64,
                 format: 'image/png', 
@@ -435,17 +429,6 @@ function evaluatePixel(sample) {
                 time: initialTimeRange,
                 attribution: 'Sentinel-2 (Classificação)'
             });
-
-            // Recorte por Polígono via BoundaryCanvas
-            if (L.TileLayer.BoundaryCanvas && geojsonObj) {
-                layerNdviRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawNdviLayer, { boundary: geojsonObj });
-                layerNdwiRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawNdwiLayer, { boundary: geojsonObj });
-                layerClassRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawClassLayer, { boundary: geojsonObj });
-            } else {
-                layerNdviRef = rawNdviLayer;
-                layerNdwiRef = rawNdwiLayer;
-                layerClassRef = rawClassLayer;
-            }
 
             layerControl.addOverlay(layerNdviRef, "Sentinel-2 NDVI");
             layerControl.addOverlay(layerNdwiRef, "Sentinel-2 NDWI");
@@ -520,7 +503,6 @@ function evaluatePixel(sample) {
                 gerarGraficos(data.features);
             }).catch(e => {
                 console.error("Erro ao carregar plantios.geojson", e);
-                document.getElementById('sidebar').innerHTML += "<p style='color:red'>Erro ao carregar os dados de plantios. Verifique a presença de plantios.geojson e a execução em servidor local.</p>";
             });
 
         // Geração dos Gráficos Laterais via Chart.js
