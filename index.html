@@ -52,9 +52,9 @@
             <p style="font-size: 11px; color: #666; margin-top: -10px; margin-bottom: 20px;">Clique em um Polígono de Área no mapa para gerar a série temporal de NDVI.</p>
 
             <div class="info-box">
-                <p><strong>Dica de Navegação:</strong> Clique nos pontos laranja no mapa para ver os detalhes de cada plantio.</p>
-                <p><strong>Nota sobre NDVI/NDWI:</strong> O visualizador de imagens e o gráfico SATVEG utilizam uma API de demonstração (Sentinel Hub). Se as imagens ficarem cinzas ou não carregarem, o limite diário gratuito esgotou. Será necessário inserir sua própria chave de API WMS no arquivo <code>index.html</code>.</p>
-                <p><strong>Nota sobre Mapa de Fundo:</strong> Foi incluída a imagem de satélite de alta resolução da Esri e OpenStreetMap.</p>
+                <p><strong>Dica de Navegação:</strong> Clique nos pontos no mapa para ver os detalhes de cada plantio.</p>
+                <p><strong>Nota sobre NDVI/NDWI:</strong> O visualizador de imagens e o gráfico SATVEG utilizam a API do Copernicus/Sentinel Hub. Se as imagens ficarem cinzas ou exibirem avisos, o limite diário gratuito pode ter sido atingido.</p>
+                <p><strong>Nota sobre Mapa de Fundo:</strong> Inclui imagens de alta resolução da Esri e OpenStreetMap.</p>
             </div>
         </div>
     </div>
@@ -66,7 +66,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <script>
-        // Inicializar mapa (focado no estado de SP aproximadamente)
+        // Inicializar mapa (focado na região central/SP)
         var map = L.map('map').setView([-23.5, -46.5], 7);
 
         // 1. OpenStreetMap
@@ -81,7 +81,7 @@
             attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
         });
 
-        // Adiciona OSM por padrão
+        // Adiciona Esri Imagery por padrão
         esriImagery.addTo(map);
 
         // Controles de Camada (Basemaps)
@@ -208,7 +208,7 @@
         var layerNdviRef = null;
         var layerNdwiRef = null;
         var layerClassRef = null;
-        var areaThresholdZoom = 13; // aprox 1:100.000
+        var areaThresholdZoom = 13;
 
         function checkAreaVisibility() {
             var currentZoom = map.getZoom();
@@ -226,7 +226,6 @@
                 if (layerAreaRef && !map.hasLayer(layerAreaRef)) map.addLayer(layerAreaRef);
             } else {
                 if (layerAreaRef && map.hasLayer(layerAreaRef)) map.removeLayer(layerAreaRef);
-                // Ocultar camadas WMS se o zoom for baixo
                 if (layerNdviRef && map.hasLayer(layerNdviRef)) map.removeLayer(layerNdviRef);
                 if (layerNdwiRef && map.hasLayer(layerNdwiRef)) map.removeLayer(layerNdwiRef);
                 if (layerClassRef && map.hasLayer(layerClassRef)) map.removeLayer(layerClassRef);
@@ -334,33 +333,30 @@
             layerAreaRef = layer;
             var geojsonObj = layer.toGeoJSON();
             
-            // CORREÇÃO 2: URL formatada corretamente (Insira seu Instance ID se o gratuito tiver expirado)
             var wmsUrl = 'https://sh.dataspace.copernicus.eu/ogc/wms/c84521b3-83d8-4067-9a07-9e207be4ef80'; 
-            
-            // CORREÇÃO 3: Janela de data inicial (Ano-Mês-Dia/Ano-Mês-Dia) para garantir captura pelo satélite
             var initialTimeRange = '2024-01-01/2024-06-01';
 
-            // Criar NDVI bruto
+            // Camada NDVI
             var rawNdviLayer = L.tileLayer.wms(wmsUrl, {
                 layers: 'NDVI', 
                 format: 'image/png', 
                 transparent: true, 
-                maxcc: 20,
+                maxcc: 30,
                 time: initialTimeRange,
                 attribution: 'Sentinel-2 (NDVI)'
             });
             
-            // Criar NDWI bruto
+            // Camada NDWI
             var rawNdwiLayer = L.tileLayer.wms(wmsUrl, {
                 layers: 'NDWI', 
                 format: 'image/png', 
                 transparent: true, 
-                maxcc: 20,
+                maxcc: 30,
                 time: initialTimeRange,
                 attribution: 'Sentinel-2 (NDWI)'
             });
 
-            // CORREÇÃO 1: Script de avaliação (Evalscript) formatado e convertido adequadamente em Base64
+            // 1. Evalscript V3 corrigido para classificação de vegetação (Saudável x Estresse)
             var evalscriptStr = `//VERSION=3
 function setup() {
   return {
@@ -368,27 +364,35 @@ function setup() {
     output: { bands: 4 }
   };
 }
+
 function evaluatePixel(sample) {
-  if (sample.dataMask === 0) return [0, 0, 0, 0];
+  if (sample.dataMask === 0) {
+    return [0, 0, 0, 0];
+  }
+
   let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
   let ndwi = (sample.B03 - sample.B08) / (sample.B03 + sample.B08);
-  let saudavel = (ndvi > 0.5) && (ndwi > 0.3);
-  if (saudavel) return [0.15, 0.68, 0.37, 1];
-  return [0.90, 0.29, 0.23, 1];
+
+  if (ndvi > 0.4 && ndwi > 0.1) {
+    return [0.15, 0.68, 0.37, 0.8]; // Verde (Saudável)
+  } else {
+    return [0.90, 0.29, 0.23, 0.8]; // Vermelho (Estresse)
+  }
 }`;
 
+            // 2. Criação da camada WMS da classificação
             var rawClassLayer = L.tileLayer.wms(wmsUrl, {
                 layers: 'TRUE_COLOR',
                 EVALSCRIPT64: btoa(evalscriptStr),
                 format: 'image/png', 
                 transparent: true, 
-                maxcc: 20,
+                maxcc: 30,
                 time: initialTimeRange,
                 attribution: 'Sentinel-2 (Classificação)'
             });
 
-            // Aplicar Máscara (BoundaryCanvas)
-            if (L.TileLayer.BoundaryCanvas && L.TileLayer.BoundaryCanvas.createFromLayer) {
+            // 3. Aplicação do recorte (BoundaryCanvas) baseado na geometria do GeoJSON
+            if (L.TileLayer.BoundaryCanvas && geojsonObj) {
                 layerNdviRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawNdviLayer, { boundary: geojsonObj });
                 layerNdwiRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawNdwiLayer, { boundary: geojsonObj });
                 layerClassRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawClassLayer, { boundary: geojsonObj });
@@ -406,7 +410,7 @@ function evaluatePixel(sample) {
             checkAreaVisibility();
         });
 
-        // Ferramenta de Slice (Datas) para Sentinel-2
+        // Ferramenta de Filtro de Datas para Sentinel-2
         var dateSliceControl = L.control({position: 'topright'});
         dateSliceControl.onAdd = function(map) {
             var div = L.DomUtil.create('div', 'slice-control');
@@ -435,7 +439,6 @@ function evaluatePixel(sample) {
                 var selectedDate = input.value;
                 if (!selectedDate) return;
 
-                // CORREÇÃO 3 (Filtro): Cria uma janela de 30 dias a partir da data selecionada
                 var dt = new Date(selectedDate);
                 var dtEnd = new Date(dt);
                 dtEnd.setDate(dtEnd.getDate() + 30);
@@ -466,12 +469,10 @@ function evaluatePixel(sample) {
                 layerControl.addOverlay(layerPlantios, "Pontos de Plantio");
                 layerPlantios.addTo(map);
 
-                // Centralizar mapa nos plantios
                 window.homeBounds = layerPlantios.getBounds();
                 map.fitBounds(window.homeBounds);
                 checkAreaVisibility();
 
-                // Chamar função de gráficos
                 gerarGraficos(data.features);
             }).catch(e => {
                 console.error("Erro ao carregar plantios.geojson", e);
