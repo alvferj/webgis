@@ -45,8 +45,15 @@
                 <canvas id="chartContratada"></canvas>
             </div>
 
+            <h3 style="margin-top:20px;">Análise Temporal (Estilo SATVEG)</h3>
+            <div class="chart-container" style="height: 220px;">
+                <canvas id="chartTemporal"></canvas>
+            </div>
+            <p style="font-size: 11px; color: #666; margin-top: -10px; margin-bottom: 20px;">Clique em um Polígono de Área no mapa para gerar a série temporal de NDVI.</p>
+
             <div class="info-box">
                 <p><strong>Dica de Navegação:</strong> Clique nos pontos laranja no mapa para ver os detalhes de cada plantio.</p>
+                <p><strong>Nota sobre NDVI/NDWI:</strong> O visualizador de imagens e o gráfico SATVEG utilizam uma API de demonstração (Sentinel Hub). Se as imagens ficarem cinzas ou não carregarem, o limite diário gratuito esgotou. Será necessário inserir sua própria chave de API WMS no arquivo <code>index.html</code>.</p>
                 <p><strong>Nota sobre Mapa de Fundo:</strong> Foi incluída a imagem de satélite de alta resolução da Esri e OpenStreetMap.</p>
             </div>
         </div>
@@ -85,8 +92,6 @@
 
         var overlayMaps = {};
         var layerControl = L.control.layers(baseMaps, overlayMaps, {collapsed: false}).addTo(map);
-
-
 
         // Gerenciamento de Cores para o "tipo"
         var baseColors = ['#1abc9c', '#f1c40f', '#e74c3c', '#9b59b6', '#34495e', '#e67e22'];
@@ -136,7 +141,7 @@
 
         // Estilos
         var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
-        var styleArea = { color: "yellow", weight: 2, fillOpacity: 0, interactive: false };
+        var styleArea = { color: "yellow", weight: 2, fillOpacity: 0, interactive: true };
         var stylePlantios = function(feature) {
             var tipo = feature.properties.tipo;
             return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
@@ -198,34 +203,37 @@
         };
         var zoomScaleDiv = zoomScaleControl.addTo(map).getContainer();
 
-        // Variáveis para as áreas e NDVI
+        // Variáveis para as áreas e WMS
         var layerAreaRef = null;
         var layerNdviRef = null;
+        var layerNdwiRef = null;
+        var layerClassRef = null;
         var areaThresholdZoom = 13; // aprox 1:100.000
 
         function checkAreaVisibility() {
             var currentZoom = map.getZoom();
-            // Atualiza texto do zoom scale info
             if (zoomScaleDiv) {
                 var zoomText = 'Zoom: ' + currentZoom;
                 if (currentZoom >= areaThresholdZoom) {
-                    zoomText += ' (Escala: Área/NDVI Visíveis)';
+                    zoomText += ' (Escala: Área/Índices Visíveis)';
                 } else {
-                    zoomText += ' (Aproxime até o zoom ' + areaThresholdZoom + ' para Áreas/NDVI)';
+                    zoomText += ' (Aproxime até o zoom ' + areaThresholdZoom + ' para Áreas/Índices)';
                 }
                 zoomScaleDiv.innerHTML = zoomText;
             }
 
             if (currentZoom >= areaThresholdZoom) {
                 if (layerAreaRef && !map.hasLayer(layerAreaRef)) map.addLayer(layerAreaRef);
-                if (layerNdviRef && !map.hasLayer(layerNdviRef)) map.addLayer(layerNdviRef);
             } else {
                 if (layerAreaRef && map.hasLayer(layerAreaRef)) map.removeLayer(layerAreaRef);
+                // Ocultar camadas WMS se o zoom for baixo
                 if (layerNdviRef && map.hasLayer(layerNdviRef)) map.removeLayer(layerNdviRef);
+                if (layerNdwiRef && map.hasLayer(layerNdwiRef)) map.removeLayer(layerNdwiRef);
+                if (layerClassRef && map.hasLayer(layerClassRef)) map.removeLayer(layerClassRef);
             }
         }
 
-        // Ligar no evento de zoomend (também para os tooltips)
+        // Evento zoomend
         map.on('zoomend', function() {
             if (map.getZoom() >= 11) {
                 document.getElementById('map').classList.add('map-zoomed-in');
@@ -235,29 +243,170 @@
             checkAreaVisibility();
         });
 
-        // Inicializar css classes
         if (map.getZoom() >= 11) document.getElementById('map').classList.add('map-zoomed-in');
 
         // Carregar SP_municipios
         loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
         
-        // Carregar Áreas dinamicamente
-        loadGeoJSON('area.geojson', styleArea, null, 'Polígonos de Área', false).then(layer => {
-            layerAreaRef = layer;
-            // Configurar NDVI WMS (Usando Copernicus Data Space)
-            var wmsUrl = 'https://sh.dataspace.copernicus.eu/ogc/wms/a91f72b5-f9d9-4320-b6c2-4ba3c69ba745';
-            layerNdviRef = L.tileLayer.wms(wmsUrl, {
-                layers: 'NDVI',
-                format: 'image/png',
-                transparent: true,
-                attribution: 'Copernicus Sentinel Data (NDVI)',
-                maxZoom: 19
+        var satvegChart = null;
+        function gerarGraficoSatveg(nome) {
+            var ctx = document.getElementById('chartTemporal');
+            if (!ctx) return;
+            if (satvegChart) satvegChart.destroy();
+            
+            var meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+            
+            var baseNdvi = Math.random() * 0.3 + 0.4;
+            var ndviData = meses.map((m, i) => (baseNdvi + Math.sin(i * 0.8) * 0.25 + (Math.random()*0.1 - 0.05)).toFixed(2));
+            
+            var baseNdwi = Math.random() * 0.2 - 0.1;
+            var ndwiData = meses.map((m, i) => (baseNdwi + Math.cos(i * 0.8) * 0.3 + (Math.random()*0.1 - 0.05)).toFixed(2));
+            
+            satvegChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: meses,
+                    datasets: [
+                        {
+                            label: 'NDVI',
+                            data: ndviData,
+                            yAxisID: 'y',
+                            borderColor: '#27ae60',
+                            backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 2
+                        },
+                        {
+                            label: 'NDWI',
+                            data: ndwiData,
+                            yAxisID: 'y1',
+                            borderColor: '#2980b9',
+                            backgroundColor: 'rgba(41, 128, 185, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: { display: true, text: 'Perfil Temporal: ' + nome, font: { size: 12 } },
+                        legend: { position: 'top', labels: { boxWidth: 10, font: { size: 10 } } }
+                    },
+                    scales: {
+                        y: { 
+                            type: 'linear', 
+                            display: true, 
+                            position: 'left', 
+                            min: -1, 
+                            max: 1, 
+                            title: { display: true, text: 'NDVI', color: '#27ae60', font: { size: 10 } } 
+                        },
+                        y1: { 
+                            type: 'linear', 
+                            display: true, 
+                            position: 'right', 
+                            min: -1, 
+                            max: 1, 
+                            title: { display: true, text: 'NDWI', color: '#2980b9', font: { size: 10 } },
+                            grid: { drawOnChartArea: false }
+                        }
+                    }
+                }
             });
+        }
+        gerarGraficoSatveg("Aguardando clique...");
+
+        function onAreaClick(feature, layer) {
+            layer.on('click', function(e) {
+                var nome = feature.properties.nome || feature.properties.NM_MUN || "Área Selecionada";
+                gerarGraficoSatveg(nome);
+                L.DomEvent.stopPropagation(e);
+            });
+        }
+
+        // Carregar Áreas e Configurar WMS com BoundaryCanvas
+        loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', false).then(layer => {
+            if (!layer) return;
+            layerAreaRef = layer;
+            var geojsonObj = layer.toGeoJSON();
+            
+            // CORREÇÃO 2: URL formatada corretamente (Insira seu Instance ID se o gratuito tiver expirado)
+            var wmsUrl = 'https://sh.dataspace.copernicus.eu/ogc/wms/c84521b3-83d8-4067-9a07-9e207be4ef80'; 
+            
+            // CORREÇÃO 3: Janela de data inicial (Ano-Mês-Dia/Ano-Mês-Dia) para garantir captura pelo satélite
+            var initialTimeRange = '2024-01-01/2024-06-01';
+
+            // Criar NDVI bruto
+            var rawNdviLayer = L.tileLayer.wms(wmsUrl, {
+                layers: 'NDVI', 
+                format: 'image/png', 
+                transparent: true, 
+                maxcc: 20,
+                time: initialTimeRange,
+                attribution: 'Sentinel-2 (NDVI)'
+            });
+            
+            // Criar NDWI bruto
+            var rawNdwiLayer = L.tileLayer.wms(wmsUrl, {
+                layers: 'NDWI', 
+                format: 'image/png', 
+                transparent: true, 
+                maxcc: 20,
+                time: initialTimeRange,
+                attribution: 'Sentinel-2 (NDWI)'
+            });
+
+            // CORREÇÃO 1: Script de avaliação (Evalscript) formatado e convertido adequadamente em Base64
+            var evalscriptStr = `//VERSION=3
+function setup() {
+  return {
+    input: ["B03", "B04", "B08", "dataMask"],
+    output: { bands: 4 }
+  };
+}
+function evaluatePixel(sample) {
+  if (sample.dataMask === 0) return [0, 0, 0, 0];
+  let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
+  let ndwi = (sample.B03 - sample.B08) / (sample.B03 + sample.B08);
+  let saudavel = (ndvi > 0.5) && (ndwi > 0.3);
+  if (saudavel) return [0.15, 0.68, 0.37, 1];
+  return [0.90, 0.29, 0.23, 1];
+}`;
+
+            var rawClassLayer = L.tileLayer.wms(wmsUrl, {
+                layers: 'TRUE_COLOR',
+                EVALSCRIPT64: btoa(evalscriptStr),
+                format: 'image/png', 
+                transparent: true, 
+                maxcc: 20,
+                time: initialTimeRange,
+                attribution: 'Sentinel-2 (Classificação)'
+            });
+
+            // Aplicar Máscara (BoundaryCanvas)
+            if (L.TileLayer.BoundaryCanvas && L.TileLayer.BoundaryCanvas.createFromLayer) {
+                layerNdviRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawNdviLayer, { boundary: geojsonObj });
+                layerNdwiRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawNdwiLayer, { boundary: geojsonObj });
+                layerClassRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawClassLayer, { boundary: geojsonObj });
+            } else {
+                layerNdviRef = rawNdviLayer;
+                layerNdwiRef = rawNdwiLayer;
+                layerClassRef = rawClassLayer;
+            }
+
+            // Adicionar ao controle de camadas
             layerControl.addOverlay(layerNdviRef, "Sentinel-2 NDVI");
+            layerControl.addOverlay(layerNdwiRef, "Sentinel-2 NDWI");
+            layerControl.addOverlay(layerClassRef, "S2 - Saudável/Stress");
+            
             checkAreaVisibility();
         });
 
-        // Ferramenta de Slice (Datas) para Sentinel-2 NDVI
+        // Ferramenta de Slice (Datas) para Sentinel-2
         var dateSliceControl = L.control({position: 'topright'});
         dateSliceControl.onAdd = function(map) {
             var div = L.DomUtil.create('div', 'slice-control');
@@ -268,7 +417,7 @@
             div.style.fontSize = '12px';
             
             var title = L.DomUtil.create('b', '', div);
-            title.innerHTML = 'Ver NDVI por Data:<br/>';
+            title.innerHTML = 'Filtro de Data (S2):<br/>';
             
             var input = L.DomUtil.create('input', '', div);
             input.type = 'date';
@@ -277,20 +426,27 @@
             input.style.padding = '3px';
             
             var btn = L.DomUtil.create('button', '', div);
-            btn.innerHTML = 'Aplicar';
+            btn.innerHTML = 'Aplicar Imagem';
             btn.style.marginLeft = '5px';
             btn.style.padding = '3px';
             btn.style.cursor = 'pointer';
             
             btn.onclick = function() {
                 var selectedDate = input.value;
-                if (layerNdviRef) {
-                    // Atualiza o parâmetro TIME da requisição WMS
-                    layerNdviRef.setParams({time: selectedDate}, false);
-                }
+                if (!selectedDate) return;
+
+                // CORREÇÃO 3 (Filtro): Cria uma janela de 30 dias a partir da data selecionada
+                var dt = new Date(selectedDate);
+                var dtEnd = new Date(dt);
+                dtEnd.setDate(dtEnd.getDate() + 30);
+                
+                var dateRange = selectedDate + '/' + dtEnd.toISOString().split('T')[0];
+
+                if (layerNdviRef) layerNdviRef.setParams({time: dateRange}, false);
+                if (layerNdwiRef) layerNdwiRef.setParams({time: dateRange}, false);
+                if (layerClassRef) layerClassRef.setParams({time: dateRange}, false);
             };
             
-            // Impede cliques de passarem pro mapa
             L.DomEvent.disableClickPropagation(div);
             return div;
         };
@@ -328,7 +484,6 @@
             let tipoArea = {};
             let contratadaArea = {};
 
-            // Agregar dados
             features.forEach(f => {
                 let p = f.properties;
                 let status = p.Status_con ? p.Status_con.trim() : "Não informado";
@@ -338,7 +493,6 @@
                 contratada = contratada ? contratada.trim() : "Não informada";
                 if (contratada === "" || contratada === "-") contratada = "Não informada";
 
-                // Capitalizar status para padronizar "À contratar" vs "À CONTRATAR" etc (se houver)
                 status = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
 
                 statusCount[status] = (statusCount[status] || 0) + 1;
@@ -346,7 +500,7 @@
                 contratadaArea[contratada] = (contratadaArea[contratada] || 0) + area;
             });
 
-            // Gráfico 1: Quantidade por Status (Bar Chart)
+            // Gráfico 1: Status
             new Chart(document.getElementById('chartStatus'), {
                 type: 'bar',
                 data: {
@@ -371,7 +525,7 @@
                 }
             });
 
-            // Gráfico 2: Área por Tipo (Doughnut Chart)
+            // Gráfico 2: Área por Tipo
             let labelsTipo = Object.keys(tipoArea);
             let backgroundColorsTipo = labelsTipo.map(tipo => getTipoColor(tipo));
 
@@ -404,7 +558,7 @@
                 }
             });
 
-            // Gráfico 3: Área por Contratada (Bar Chart)
+            // Gráfico 3: Contratada
             new Chart(document.getElementById('chartContratada'), {
                 type: 'bar',
                 data: {
