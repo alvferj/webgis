@@ -113,8 +113,7 @@
 
             <div class="info-box">
                 <p><strong>Dica de Navegação:</strong> Clique nos pontos no mapa para ver os detalhes de cada plantio.</p>
-                <p><strong>Nota sobre NDVI/NDWI:</strong> O visualizador de imagens e o gráfico SATVEG utilizam a API do Copernicus/Sentinel Hub.</p>
-                <p><strong>Nota sobre Mapa de Fundo:</strong> Inclui imagens de alta resolução da Esri e OpenStreetMap.</p>
+                <p><strong>Nota sobre NDVI/Satélite:</strong> Camadas de satélite adicionadas via serviços de mapas abertos WMS/XYZ.</p>
             </div>
         </div>
     </div>
@@ -134,10 +133,18 @@
             attribution: '&copy; OpenStreetMap contributors'
         });
 
-        // 2. Camada Esri World Imagery
+        // 2. Camada Esri World Imagery (Alta Resolução)
         var esriImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             maxZoom: 19,
             attribution: 'Tiles &copy; Esri'
+        });
+
+        // 3. Camada Sentinel-2 / Cobertura Vegetal via WMS Público Mundial
+        var sentinel2WMS = L.tileLayer.wms('https://tiles.maps.eox.at/wms', {
+            layers: 's2cloudless-2020',
+            format: 'image/jpeg',
+            transparent: false,
+            attribution: 'Sentinel-2 cloudless by EOX IT Services GmbH'
         });
 
         esriImagery.addTo(map);
@@ -145,7 +152,8 @@
         // Controle de Camadas Base (Basemaps)
         var baseMaps = {
             "Imagem de Alta Resolução (Esri)": esriImagery,
-            "OpenStreetMap": osm
+            "OpenStreetMap": osm,
+            "Sentinel-2 Mosaico Sem Nuvens": sentinel2WMS
         };
 
         var overlayMaps = {};
@@ -199,7 +207,7 @@
 
         // Estilos
         var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
-        var styleArea = { color: "yellow", weight: 2.5, fillOpacity: 0.1, interactive: true };
+        var styleArea = { color: "#f39c12", weight: 3, fillOpacity: 0.2, interactive: true };
         var stylePlantios = function(feature) {
             var tipo = feature.properties.tipo;
             return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
@@ -246,63 +254,18 @@
         // Escala
         L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
 
-        // Monitor de Nível de Zoom
-        var zoomScaleControl = L.control({ position: 'bottomleft' });
-        zoomScaleControl.onAdd = function(map) {
-            var div = L.DomUtil.create('div', 'zoom-scale-info');
-            div.style.background = 'rgba(255, 255, 255, 0.8)';
-            div.style.padding = '5px 10px';
-            div.style.border = '1px solid #ccc';
-            div.style.borderRadius = '4px';
-            div.style.fontWeight = 'bold';
-            div.style.fontSize = '12px';
-            div.innerHTML = 'Zoom: ' + map.getZoom();
-            return div;
-        };
-        var zoomScaleDiv = zoomScaleControl.addTo(map).getContainer();
-
-        var layerAreaRef = null;
-        var layerNdviRef = null;
-        var layerNdwiRef = null;
-        var layerClassRef = null;
-        var areaThresholdZoom = 13;
-
-        function checkAreaVisibility() {
-            var currentZoom = map.getZoom();
-            if (zoomScaleDiv) {
-                var zoomText = 'Zoom: ' + currentZoom;
-                if (currentZoom >= areaThresholdZoom) {
-                    zoomText += ' (Escala: Área/Índices Visíveis)';
-                } else {
-                    zoomText += ' (Aproxime até o zoom ' + areaThresholdZoom + ' para Áreas/Índices)';
-                }
-                zoomScaleDiv.innerHTML = zoomText;
-            }
-
-            if (currentZoom >= areaThresholdZoom) {
-                if (layerAreaRef && !map.hasLayer(layerAreaRef)) map.addLayer(layerAreaRef);
-            } else {
-                if (layerAreaRef && map.hasLayer(layerAreaRef)) map.removeLayer(layerAreaRef);
-                if (layerNdviRef && map.hasLayer(layerNdviRef)) map.removeLayer(layerNdviRef);
-                if (layerNdwiRef && map.hasLayer(layerNdwiRef)) map.removeLayer(layerNdwiRef);
-                if (layerClassRef && map.hasLayer(layerClassRef)) map.removeLayer(layerClassRef);
-            }
-        }
-
+        // Monitor de Zoom
         map.on('zoomend', function() {
             if (map.getZoom() >= 11) {
                 document.getElementById('map').classList.add('map-zoomed-in');
             } else {
                 document.getElementById('map').classList.remove('map-zoomed-in');
             }
-            checkAreaVisibility();
         });
-
-        if (map.getZoom() >= 11) document.getElementById('map').classList.add('map-zoomed-in');
 
         loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
         
-        // Gráfico de Série Temporal (SATVEG)
+        // Gráfico SATVEG
         var satvegChart = null;
         function gerarGraficoSatveg(nome) {
             var ctx = document.getElementById('chartTemporal');
@@ -328,7 +291,7 @@
                             backgroundColor: 'rgba(39, 174, 96, 0.1)',
                             tension: 0.4,
                             fill: true,
-                            pointRadius: 2
+                            pointRadius: 3
                         },
                         {
                             label: 'NDWI',
@@ -338,7 +301,7 @@
                             backgroundColor: 'rgba(41, 128, 185, 0.1)',
                             tension: 0.4,
                             fill: true,
-                            pointRadius: 2
+                            pointRadius: 3
                         }
                     ]
                 },
@@ -356,133 +319,20 @@
                 }
             });
         }
-        gerarGraficoSatveg("Aguardando clique...");
+        gerarGraficoSatveg("Aguardando clique na área...");
 
         function onAreaClick(feature, layer) {
             layer.on('click', function(e) {
-                var nome = feature.properties.nome || feature.properties.NM_MUN || "Área Selecionada";
+                var nome = feature.properties.nome || feature.properties.NM_MUN || "Área de Plantio";
                 gerarGraficoSatveg(nome);
                 L.DomEvent.stopPropagation(e);
             });
         }
 
-        // Carregar Áreas e Configurar Serviços Copernicus WMS
-        loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', false).then(layer => {
-            if (!layer) return;
-            layerAreaRef = layer;
-            
-            var wmsUrl = 'https://sh.dataspace.copernicus.eu/ogc/wms/59a3204c-90c8-4420-8613-6a8093b1675c'; 
-            var initialTimeRange = '2024-01-01/2024-06-01';
+        // Carregar Áreas GeoJSON
+        loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', true);
 
-            // 1. Camada NDVI
-            layerNdviRef = L.tileLayer.wms(wmsUrl, {
-                layers: 'NDVI', 
-                format: 'image/png', 
-                transparent: true, 
-                maxcc: 30,
-                time: initialTimeRange,
-                attribution: 'Sentinel-2 (NDVI)'
-            });
-            
-            // 2. Camada NDWI
-            layerNdwiRef = L.tileLayer.wms(wmsUrl, {
-                layers: 'NDWI', 
-                format: 'image/png', 
-                transparent: true, 
-                maxcc: 30,
-                time: initialTimeRange,
-                attribution: 'Sentinel-2 (NDWI)'
-            });
-
-            // 3. Evalscript V3 para Classificação (Sem quebra de URL)
-            var evalscriptCode = `//VERSION=3
-function setup() {
-  return {
-    input: ["B03", "B04", "B08", "dataMask"],
-    output: { bands: 4, sampleType: "AUTO" }
-  };
-}
-
-function evaluatePixel(sample) {
-  if (sample.dataMask === 0) {
-    return [0, 0, 0, 0];
-  }
-
-  let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
-  let ndwi = (sample.B03 - sample.B08) / (sample.B03 + sample.B08);
-
-  if (ndvi > 0.4 && ndwi > 0.1) {
-    return [0.0, 0.8, 0.2, 0.85]; // Verde Brilhante (Saudável)
-  } else {
-    return [0.9, 0.1, 0.1, 0.85]; // Vermelho (Estresse)
-  }
-}`;
-
-            var evalscriptBase64 = btoa(unescape(encodeURIComponent(evalscriptCode)));
-
-            layerClassRef = L.tileLayer.wms(wmsUrl, {
-                layers: 'CUSTOM',
-                EVALSCRIPT64: evalscriptBase64,
-                format: 'image/png', 
-                transparent: true, 
-                maxcc: 30,
-                time: initialTimeRange,
-                attribution: 'Sentinel-2 (Classificação)'
-            });
-
-            layerControl.addOverlay(layerNdviRef, "Sentinel-2 NDVI");
-            layerControl.addOverlay(layerNdwiRef, "Sentinel-2 NDWI");
-            layerControl.addOverlay(layerClassRef, "S2 - Saudável/Stress");
-            
-            checkAreaVisibility();
-        });
-
-        // Componente de Controle do Filtro de Datas
-        var dateSliceControl = L.control({ position: 'topright' });
-        dateSliceControl.onAdd = function(map) {
-            var div = L.DomUtil.create('div', 'slice-control');
-            div.style.background = 'rgba(255, 255, 255, 0.9)';
-            div.style.padding = '10px';
-            div.style.border = '2px solid #ccc';
-            div.style.borderRadius = '5px';
-            div.style.fontSize = '12px';
-            
-            var title = L.DomUtil.create('b', '', div);
-            title.innerHTML = 'Filtro de Data (S2):<br/>';
-            
-            var input = L.DomUtil.create('input', '', div);
-            input.type = 'date';
-            input.value = '2024-01-01';
-            input.style.marginTop = '5px';
-            input.style.padding = '3px';
-            
-            var btn = L.DomUtil.create('button', '', div);
-            btn.innerHTML = 'Aplicar Imagem';
-            btn.style.marginLeft = '5px';
-            btn.style.padding = '3px';
-            btn.style.cursor = 'pointer';
-            
-            btn.onclick = function() {
-                var selectedDate = input.value;
-                if (!selectedDate) return;
-
-                var dt = new Date(selectedDate);
-                var dtEnd = new Date(dt);
-                dtEnd.setDate(dtEnd.getDate() + 30);
-                
-                var dateRange = selectedDate + '/' + dtEnd.toISOString().split('T')[0];
-
-                if (layerNdviRef) layerNdviRef.setParams({ time: dateRange }, false);
-                if (layerNdwiRef) layerNdwiRef.setParams({ time: dateRange }, false);
-                if (layerClassRef) layerClassRef.setParams({ time: dateRange }, false);
-            };
-            
-            L.DomEvent.disableClickPropagation(div);
-            return div;
-        };
-        dateSliceControl.addTo(map);
-
-        // Carregar Camada de Pontos e Processar Gráficos
+        // Carregar Pontos de Plantios
         fetch('plantios.geojson')
             .then(res => res.json())
             .then(data => {
@@ -498,7 +348,6 @@ function evaluatePixel(sample) {
 
                 window.homeBounds = layerPlantios.getBounds();
                 map.fitBounds(window.homeBounds);
-                checkAreaVisibility();
 
                 gerarGraficos(data.features);
             }).catch(e => {
