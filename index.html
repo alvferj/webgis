@@ -113,7 +113,7 @@
 
             <div class="info-box">
                 <p><strong>Dica de Navegação:</strong> Clique nos pontos no mapa para ver os detalhes de cada plantio.</p>
-                <p><strong>Nota sobre NDVI/Satélite:</strong> Camadas de satélite adicionadas via serviços de mapas abertos WMS/XYZ.</p>
+                <p><strong>Camadas de Fundo:</strong> Escolha entre Imagem de Satélite Esri, OpenStreetMap ou Mosaico Sentinel-2.</p>
             </div>
         </div>
     </div>
@@ -124,42 +124,41 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <script>
-        // Inicializar o mapa
+        // 1. Inicializar o Mapa
         var map = L.map('map').setView([-23.5, -46.5], 7);
 
-        // 1. Camada OpenStreetMap
+        // 2. Definir Camadas Base (Basemaps)
         var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
-            attribution: '&copy; OpenStreetMap contributors'
+            attribution: '&copy; OpenStreetMap'
         });
 
-        // 2. Camada Esri World Imagery (Alta Resolução)
         var esriImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             maxZoom: 19,
             attribution: 'Tiles &copy; Esri'
         });
 
-        // 3. Camada Sentinel-2 / Cobertura Vegetal via WMS Público Mundial
-        var sentinel2WMS = L.tileLayer.wms('https://tiles.maps.eox.at/wms', {
+        var sentinel2EOX = L.tileLayer.wms('https://tiles.maps.eox.at/wms', {
             layers: 's2cloudless-2020',
             format: 'image/jpeg',
             transparent: false,
-            attribution: 'Sentinel-2 cloudless by EOX IT Services GmbH'
+            attribution: 'Sentinel-2 cloudless by EOX'
         });
 
+        // Adiciona a camada padrão ao mapa
         esriImagery.addTo(map);
 
-        // Controle de Camadas Base (Basemaps)
+        // 3. Controle de Camadas
         var baseMaps = {
-            "Imagem de Alta Resolução (Esri)": esriImagery,
+            "Satélite (Esri Alta Resolução)": esriImagery,
             "OpenStreetMap": osm,
-            "Sentinel-2 Mosaico Sem Nuvens": sentinel2WMS
+            "Sentinel-2 (Mosaico Global)": sentinel2EOX
         };
 
         var overlayMaps = {};
         var layerControl = L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
 
-        // Mapeamento de Cores por tipo
+        // 4. Mapeamento de Cores
         var baseColors = ['#1abc9c', '#f1c40f', '#e74c3c', '#9b59b6', '#34495e', '#e67e22'];
         var tipoColors = {};
         function getTipoColor(tipo) {
@@ -170,16 +169,26 @@
             return tipoColors[tipo];
         }
 
-        // Carregador Genérico de GeoJSON
+        // 5. Funções de Estilo
+        var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
+        var styleArea = { color: "#f39c12", weight: 2.5, fillOpacity: 0.2, interactive: true };
+        var stylePlantios = function(feature) {
+            var tipo = feature.properties ? feature.properties.tipo : "Outro";
+            return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
+        };
+
+        // 6. Carregador Genérico de GeoJSON com tratamento de erro
         async function loadGeoJSON(url, style, onEachFeature, layerName, visibleByDefault) {
             try {
                 const response = await fetch(url);
+                if (!response.ok) throw new Error("Status " + response.status);
                 const data = await response.json();
+                
                 var layer = L.geoJSON(data, {
                     style: style,
                     onEachFeature: function(feature, layer) {
                         if (onEachFeature) onEachFeature(feature, layer);
-                        if (layerName === 'Municípios SP' && feature.properties.NM_MUN) {
+                        if (layerName === 'Municípios SP' && feature.properties && feature.properties.NM_MUN) {
                             layer.bindTooltip(feature.properties.NM_MUN, {
                                 permanent: true,
                                 direction: 'center',
@@ -201,19 +210,12 @@
                 }
                 return layer;
             } catch (e) {
-                console.error("Erro ao carregar " + url, e);
+                console.warn("Aviso: Não foi possível carregar " + url + ". Verifique se o arquivo existe na raiz.", e);
+                return null;
             }
         }
 
-        // Estilos
-        var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
-        var styleArea = { color: "#f39c12", weight: 3, fillOpacity: 0.2, interactive: true };
-        var stylePlantios = function(feature) {
-            var tipo = feature.properties.tipo;
-            return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
-        };
-
-        // Popups para Pontos de Plantio
+        // 7. Popups para Pontos de Plantio
         function popupPlantios(feature, layer) {
             if (feature.properties) {
                 var p = feature.properties;
@@ -232,7 +234,7 @@
             }
         }
 
-        // Botão Home
+        // 8. Botão Home
         var homeControl = L.control({ position: 'topleft' });
         homeControl.onAdd = function(map) {
             var btn = L.DomUtil.create('button', 'home-button');
@@ -251,10 +253,9 @@
         };
         homeControl.addTo(map);
 
-        // Escala
         L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
 
-        // Monitor de Zoom
+        // 9. Eventos de Zoom
         map.on('zoomend', function() {
             if (map.getZoom() >= 11) {
                 document.getElementById('map').classList.add('map-zoomed-in');
@@ -263,9 +264,7 @@
             }
         });
 
-        loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
-        
-        // Gráfico SATVEG
+        // 10. Gráfico SATVEG
         var satvegChart = null;
         function gerarGraficoSatveg(nome) {
             var ctx = document.getElementById('chartTemporal');
@@ -323,18 +322,21 @@
 
         function onAreaClick(feature, layer) {
             layer.on('click', function(e) {
-                var nome = feature.properties.nome || feature.properties.NM_MUN || "Área de Plantio";
+                var nome = (feature.properties && (feature.properties.nome || feature.properties.NM_MUN)) ? (feature.properties.nome || feature.properties.NM_MUN) : "Área Selecionada";
                 gerarGraficoSatveg(nome);
                 L.DomEvent.stopPropagation(e);
             });
         }
 
-        // Carregar Áreas GeoJSON
+        // 11. Execução de Carga das Camadas GeoJSON
+        loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
         loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', true);
 
-        // Carregar Pontos de Plantios
         fetch('plantios.geojson')
-            .then(res => res.json())
+            .then(res => {
+                if(!res.ok) throw new Error("Erro " + res.status);
+                return res.json();
+            })
             .then(data => {
                 var layerPlantios = L.geoJSON(data, {
                     pointToLayer: function(feature, latlng) {
@@ -349,19 +351,21 @@
                 window.homeBounds = layerPlantios.getBounds();
                 map.fitBounds(window.homeBounds);
 
-                gerarGraficos(data.features);
+                if (data.features) {
+                    gerarGraficos(data.features);
+                }
             }).catch(e => {
-                console.error("Erro ao carregar plantios.geojson", e);
+                console.warn("Aviso ao carregar plantios.geojson:", e);
             });
 
-        // Geração dos Gráficos Laterais via Chart.js
+        // 12. Geração dos Gráficos Laterais (Chart.js)
         function gerarGraficos(features) {
             let statusCount = {};
             let tipoArea = {};
             let contratadaArea = {};
 
             features.forEach(f => {
-                let p = f.properties;
+                let p = f.properties || {};
                 let status = p.Status_con ? p.Status_con.trim() : "Não informado";
                 let tipo = p.tipo ? p.tipo.trim() : "Outro";
                 let area = parseFloat(p.area_ha) || 0;
