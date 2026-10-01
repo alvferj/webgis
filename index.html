@@ -113,14 +113,13 @@
 
             <div class="info-box">
                 <p><strong>Dica de Navegação:</strong> Clique nos pontos no mapa para ver os detalhes de cada plantio.</p>
-                <p><strong>Camadas de Fundo:</strong> Escolha entre Imagem de Satélite Esri, OpenStreetMap ou Mosaico Sentinel-2.</p>
+                <p><strong>Camadas de Fundo:</strong> Escolha entre Imagem de Satélite Esri, OpenStreetMap ou Análise Personalizada Sentinel (NDVI/NDWI).</p>
             </div>
         </div>
     </div>
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/aparshin/leaflet-boundary-canvas/src/BoundaryCanvas.js"></script>
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
@@ -139,27 +138,65 @@
             attribution: 'Tiles &copy; Esri'
         });
 
-        var sentinel2EOX = L.tileLayer.wms('https://tiles.maps.eox.at/wms', {
-            layers: 's2cloudless-2020',
-            format: 'image/jpeg',
-            transparent: false,
-            attribution: 'Sentinel-2 cloudless by EOX'
+        // 3. Evalscript Personalizado para a API WMS do Sentinel Hub
+        var evalscriptCustomizado = `//VERSION=3
+function setup() {
+  return {
+    input: ["B03", "B04", "B08", "dataMask"],
+    output: { 
+      id: "default",
+      bands: 4, 
+      sampleType: "AUTO" 
+    }
+  };
+}
+
+function evaluatePixel(sample) {
+  if (sample.dataMask === 0) {
+    return [0, 0, 0, 0];
+  }
+
+  let denomNdvi = sample.B08 + sample.B04;
+  let denomNdwi = sample.B03 + sample.B08;
+
+  let ndvi = denomNdvi !== 0 ? (sample.B08 - sample.B04) / denomNdvi : 0;
+  let ndwi = denomNdwi !== 0 ? (sample.B03 - sample.B08) / denomNdwi : 0;
+
+  if (ndvi > 0.4 && ndwi > 0.1) {
+    return [0.0, 0.8, 0.2, 0.9];
+  } else {
+    return [0.9, 0.1, 0.1, 0.9];
+  }
+}`;
+
+        // 4. Instância WMS do Sentinel Hub com Evalscript
+        // IMPORTANTE: Substitua 'SEU_INSTANCE_ID_AQUI' pelo seu Instance ID obtido no Sentinel Hub Dashboard
+        var sentinelHubWMS = L.tileLayer.wms('https://services.sentinel-hub.com/ogc/wms/SEU_INSTANCE_ID_AQUI', {
+            layers: 'DEFAULT',
+            format: 'image/png',
+            transparent: true,
+            version: '1.3.0',
+            evalscript: evalscriptCustomizado,
+            maxZoom: 18,
+            attribution: '&copy; Sentinel Hub'
         });
 
-        // Adiciona a camada padrão ao mapa
+        // Adiciona a camada base padrão ao mapa
         esriImagery.addTo(map);
 
-        // 3. Controle de Camadas
+        // 5. Controle de Camadas
         var baseMaps = {
             "Satélite (Esri Alta Resolução)": esriImagery,
-            "OpenStreetMap": osm,
-            "Sentinel-2 (Mosaico Global)": sentinel2EOX
+            "OpenStreetMap": osm
         };
 
-        var overlayMaps = {};
+        var overlayMaps = {
+            "Análise Vegetação (Sentinel-2 WMS)": sentinelHubWMS
+        };
+
         var layerControl = L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
 
-        // 4. Mapeamento de Cores
+        // 6. Mapeamento de Cores
         var baseColors = ['#1abc9c', '#f1c40f', '#e74c3c', '#9b59b6', '#34495e', '#e67e22'];
         var tipoColors = {};
         function getTipoColor(tipo) {
@@ -170,7 +207,7 @@
             return tipoColors[tipo];
         }
 
-        // 5. Funções de Estilo
+        // 7. Funções de Estilo
         var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
         var styleArea = { color: "#f39c12", weight: 2.5, fillOpacity: 0.2, interactive: true };
         var stylePlantios = function(feature) {
@@ -178,7 +215,7 @@
             return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
         };
 
-        // 6. Carregador Genérico de GeoJSON com tratamento de erro
+        // 8. Carregador Genérico de GeoJSON
         async function loadGeoJSON(url, style, onEachFeature, layerName, visibleByDefault) {
             try {
                 const response = await fetch(url);
@@ -211,12 +248,12 @@
                 }
                 return layer;
             } catch (e) {
-                console.warn("Aviso: Não foi possível carregar " + url + ". Verifique se o arquivo existe na raiz.", e);
+                console.warn("Aviso: Não foi possível carregar " + url + ".", e);
                 return null;
             }
         }
 
-        // 7. Popups para Pontos de Plantio
+        // 9. Popups para Pontos de Plantio
         function popupPlantios(feature, layer) {
             if (feature.properties) {
                 var p = feature.properties;
@@ -235,7 +272,7 @@
             }
         }
 
-        // 8. Botão Home
+        // 10. Botão Home
         var homeControl = L.control({ position: 'topleft' });
         homeControl.onAdd = function(map) {
             var btn = L.DomUtil.create('button', 'home-button');
@@ -256,7 +293,7 @@
 
         L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
 
-        // 9. Eventos de Zoom
+        // 11. Eventos de Zoom
         map.on('zoomend', function() {
             if (map.getZoom() >= 11) {
                 document.getElementById('map').classList.add('map-zoomed-in');
@@ -265,7 +302,7 @@
             }
         });
 
-        // 10. Gráfico SATVEG
+        // 12. Gráfico SATVEG
         var satvegChart = null;
         function gerarGraficoSatveg(nome) {
             var ctx = document.getElementById('chartTemporal');
@@ -329,109 +366,9 @@
             });
         }
 
-        // Variáveis globais para as camadas do satélite
-        var layerAreaRef = null;
-        var layerNdviRef = null;
-        var layerNdwiRef = null;
-        var layerClassRef = null;
-
-        // 11. Execução de Carga das Camadas GeoJSON
+        // 13. Execução de Carga das Camadas GeoJSON
         loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
-        
-        loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', false).then(layer => {
-            if (!layer) return;
-            layerAreaRef = layer;
-            var geojsonObj = layer.toGeoJSON();
-            layer.addTo(map);
-            
-            // ATENÇÃO: Substitua o placeholder abaixo pelo seu Instance ID gerado no Sentinel Hub Dashboard.
-            // Exemplo: 'https://sh.dataspace.copernicus.eu/ogc/wms/c84521b3-...'
-            var wmsUrl = 'https://sh.dataspace.copernicus.eu/ogc/wms/59a3204c-90c8-4420-8613-6a8093b1675c';
-            
-            // Criar NDVI bruto
-            var rawNdviLayer = L.tileLayer.wms(wmsUrl, {
-                layers: 'NDVI', format: 'image/png', transparent: true, attribution: 'Sentinel-2 (NDVI)'
-            });
-            // Criar NDWI bruto
-            var rawNdwiLayer = L.tileLayer.wms(wmsUrl, {
-                layers: 'NDWI', format: 'image/png', transparent: true, attribution: 'Sentinel-2 (NDWI)'
-            });
-
-            // Criar camada de Classificação Dinâmica (Saudável/Stress) via Evalscript
-            // Fórmula requisitada: ((NDVI)>0.5)*((NDWI)>0.3)
-            var evalscriptStr = `
-                //VERSION=3
-                function setup() {
-                  return { input: ["B03", "B04", "B08", "dataMask"], output: { bands: 4 } };
-                }
-                function evaluatePixel(sample) {
-                  if (sample.dataMask === 0) return [0, 0, 0, 0];
-                  let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04);
-                  let ndwi = (sample.B03 - sample.B08) / (sample.B03 + sample.B08);
-                  let saudavel = (ndvi > 0.5) && (ndwi > 0.3);
-                  if (saudavel) return [0.15, 0.68, 0.37, 1]; // Saudável = Verde
-                  return [0.90, 0.29, 0.23, 1]; // Stress = Vermelho
-                }
-            `;
-            var rawClassLayer = L.tileLayer.wms(wmsUrl, {
-                layers: '1_TRUE_COLOR', // Usa a camada base e sobreescreve com evalscript
-                EVALSCRIPT: btoa(evalscriptStr),
-                format: 'image/png', transparent: true, attribution: 'Sentinel-2 (Classificação)'
-            });
-
-            // Aplicar Máscara (BoundaryCanvas)
-            if (L.TileLayer.BoundaryCanvas && L.TileLayer.BoundaryCanvas.createFromLayer) {
-                layerNdviRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawNdviLayer, { boundary: geojsonObj });
-                layerNdwiRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawNdwiLayer, { boundary: geojsonObj });
-                layerClassRef = L.TileLayer.BoundaryCanvas.createFromLayer(rawClassLayer, { boundary: geojsonObj });
-            } else {
-                layerNdviRef = rawNdviLayer;
-                layerNdwiRef = rawNdwiLayer;
-                layerClassRef = rawClassLayer;
-            }
-
-            // Adicionar ao controle de camadas
-            layerControl.addOverlay(layerNdviRef, "Sentinel-2 NDVI (Dentro da Área)");
-            layerControl.addOverlay(layerNdwiRef, "Sentinel-2 NDWI (Dentro da Área)");
-            layerControl.addOverlay(layerClassRef, "S2 - Saudável/Stress");
-        });
-
-        // Ferramenta de Slice (Datas) para Sentinel-2
-        var dateSliceControl = L.control({position: 'topright'});
-        dateSliceControl.onAdd = function(map) {
-            var div = L.DomUtil.create('div', 'slice-control');
-            div.style.background = 'rgba(255, 255, 255, 0.9)';
-            div.style.padding = '10px';
-            div.style.border = '2px solid #ccc';
-            div.style.borderRadius = '5px';
-            div.style.fontSize = '12px';
-            
-            var title = L.DomUtil.create('b', '', div);
-            title.innerHTML = 'Filtro de Data (S2):<br/>';
-            
-            var input = L.DomUtil.create('input', '', div);
-            input.type = 'date';
-            input.value = '2024-01-01';
-            input.style.marginTop = '5px';
-            input.style.padding = '3px';
-            
-            var btn = L.DomUtil.create('button', '', div);
-            btn.innerHTML = 'Aplicar Imagem';
-            btn.style.marginLeft = '5px';
-            btn.style.padding = '3px';
-            btn.style.cursor = 'pointer';
-            
-            btn.onclick = function() {
-                var selectedDate = input.value;
-                if (layerNdviRef) layerNdviRef.setParams({time: selectedDate}, false);
-                if (layerNdwiRef) layerNdwiRef.setParams({time: selectedDate}, false);
-                if (layerClassRef) layerClassRef.setParams({time: selectedDate}, false);
-            };
-            
-            L.DomEvent.disableClickPropagation(div);
-            return div;
-        };
-        dateSliceControl.addTo(map);
+        loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', true);
 
         fetch('plantios.geojson')
             .then(res => {
@@ -459,7 +396,7 @@
                 console.warn("Aviso ao carregar plantios.geojson:", e);
             });
 
-        // 12. Geração dos Gráficos Laterais (Chart.js)
+        // 14. Geração dos Gráficos Laterais (Chart.js)
         function gerarGraficos(features) {
             let statusCount = {};
             let tipoArea = {};
