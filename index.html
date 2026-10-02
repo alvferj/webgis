@@ -4,9 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Painel WebGIS - Gestão de Plantios</title>
+
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
     <style>
+        /* Estilos do Layout */
         body, html { 
             margin: 0; 
             padding: 0; 
@@ -45,6 +48,8 @@
             border-left: 2px solid #bdc3c7; 
             min-width: 350px; 
         }
+
+        /* Container dos Gráficos */
         .chart-container { 
             width: 100%; 
             height: 180px; 
@@ -53,6 +58,7 @@
             padding: 10px; 
             border-radius: 8px; 
             box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+            box-sizing: border-box;
         }
         h3 { 
             color: #2c3e50; 
@@ -69,6 +75,8 @@
             margin-top: 20px; 
             box-shadow: 0 1px 3px rgba(0,0,0,0.1); 
         }
+
+        /* Tooltips nos Municípios */
         .leaflet-tooltip.city-label {
             background: none; 
             border: none; 
@@ -82,6 +90,43 @@
         .map-zoomed-in .leaflet-tooltip.city-label { 
             display: block; 
         }
+
+        /* Legenda Flutuante do Evalscript */
+        .legend-control {
+            background: rgba(255, 255, 255, 0.92);
+            padding: 10px 14px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+            font-size: 12px;
+            line-height: 18px;
+            color: #2c3e50;
+            backdrop-filter: blur(4px);
+            max-width: 220px;
+        }
+        .legend-control h4 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            font-weight: bold;
+            color: #1a252f;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 4px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .legend-item:last-child {
+            margin-bottom: 0;
+        }
+        .legend-color {
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+            margin-right: 8px;
+            border: 1px solid rgba(0,0,0,0.15);
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body>
@@ -91,7 +136,7 @@
     <div id="main">
         <div id="map"></div>
         <div id="sidebar">
-            <h3>Gráficos Dinâmicos (Plantios)</h3>
+            <h3>Gráficos Dinâmicos (Área Visível)</h3>
             
             <div class="chart-container">
                 <canvas id="chartStatus"></canvas>
@@ -105,29 +150,43 @@
                 <canvas id="chartContratada"></canvas>
             </div>
 
-            <h3 style="margin-top:20px;">Análise Temporal (Estilo SATVEG)</h3>
+            <h3 style="margin-top:20px;">Análise Temporal</h3>
             <div class="chart-container" style="height: 220px;">
                 <canvas id="chartTemporal"></canvas>
             </div>
-            <p style="font-size: 11px; color: #666; margin-top: -10px; margin-bottom: 20px;">Clique em um Polígono de Área no mapa para gerar a série temporal de NDVI.</p>
+            <p style="font-size: 11px; color: #666; margin-top: -10px; margin-bottom: 20px;">
+                Clique em um Polígono de Área no mapa para gerar a série temporal de NDVI.
+            </p>
 
             <div class="info-box">
-                <p><strong>Dica de Navegação:</strong> Clique nos pontos no mapa para ver os detalhes de cada plantio.</p>
-                <p><strong>Camadas de Fundo:</strong> Escolha entre Imagem de Satélite Esri, OpenStreetMap ou Análise Personalizada Sentinel (NDVI/NDWI).</p>
+                <p><strong>Dica de Navegação:</strong> Mova ou dê zoom no mapa para atualizar os gráficos em tempo real com os dados da área visível.</p>
+                <p><strong>Sentinel-2:</strong> Selecione a data no canto superior direito para atualizar a camada WMS do satélite.</p>
             </div>
         </div>
     </div>
 
-    <!-- Leaflet JS -->
+    <!-- Bibliotecas JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
+
     <script>
-        // 1. Inicializar o Mapa
+        // ============================================================
+        // 1. ESTADO GLOBAL
+        // ============================================================
+        var dadosCompletosPlantios = [];
+        var camadaPlantiosAtiva = true;
+        var layerPlantiosRef = null;
+
+        var chartStatus = null;
+        var chartTipo = null;
+        var chartContratada = null;
+        var satvegChart = null;
+
+        // ============================================================
+        // 2. MAPA E BASEMAPS
+        // ============================================================
         var map = L.map('map').setView([-23.5, -46.5], 7);
 
-        // 2. Definir Camadas Base (Basemaps)
         var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '&copy; OpenStreetMap'
@@ -136,9 +195,11 @@
         var esriImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             maxZoom: 19,
             attribution: 'Tiles &copy; Esri'
-        });
+        }).addTo(map);
 
-        // 3. Evalscript Personalizado para a API WMS do Sentinel Hub
+        // ============================================================
+        // 3. CAMADA SENTINEL-2 WMS COM EVALSCRIPT
+        // ============================================================
         var evalscriptCustomizado = `//VERSION=3
 function setup() {
   return {
@@ -169,22 +230,21 @@ function evaluatePixel(sample) {
   }
 }`;
 
-        // 4. Instância WMS do Sentinel Hub com Evalscript
-        // IMPORTANTE: Substitua 'SEU_INSTANCE_ID_AQUI' pelo seu Instance ID obtido no Sentinel Hub Dashboard
+        // Substitua 'SEU_INSTANCE_ID_AQUI' pelo Instance ID obtido no Sentinel Hub Dashboard
         var sentinelHubWMS = L.tileLayer.wms('https://services.sentinel-hub.com/ogc/wms/SEU_INSTANCE_ID_AQUI', {
             layers: 'DEFAULT',
             format: 'image/png',
             transparent: true,
             version: '1.3.0',
+            TIME: '2024-05-01',
             evalscript: evalscriptCustomizado,
             maxZoom: 18,
             attribution: '&copy; Sentinel Hub'
         });
 
-        // Adiciona a camada base padrão ao mapa
-        esriImagery.addTo(map);
-
-        // 5. Controle de Camadas
+        // ============================================================
+        // 4. CONTROLE DE CAMADAS
+        // ============================================================
         var baseMaps = {
             "Satélite (Esri Alta Resolução)": esriImagery,
             "OpenStreetMap": osm
@@ -196,7 +256,124 @@ function evaluatePixel(sample) {
 
         var layerControl = L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
 
-        // 6. Mapeamento de Cores
+        // ============================================================
+        // 5. CONTROLES CUSTOMIZADOS
+        // ============================================================
+        
+        // Botão Home
+        var homeControl = L.control({ position: 'topleft' });
+        homeControl.onAdd = function(map) {
+            var btn = L.DomUtil.create('button', 'home-button');
+            btn.innerHTML = '🏠 Home';
+            btn.title = 'Voltar para a extensão total';
+            btn.style.padding = '5px 10px';
+            btn.style.cursor = 'pointer';
+            btn.style.background = 'white';
+            btn.style.border = '2px solid rgba(0,0,0,0.2)';
+            btn.style.borderRadius = '4px';
+            btn.style.fontWeight = 'bold';
+            btn.onclick = function() {
+                if (window.homeBounds) map.fitBounds(window.homeBounds);
+            };
+            return btn;
+        };
+        homeControl.addTo(map);
+
+        // Seletor de Data (Sentinel-2)
+        var dateControl = L.control({ position: 'topright' });
+        dateControl.onAdd = function(map) {
+            var div = L.DomUtil.create('div', 'leaflet-bar leaflet-control-date');
+            div.style.background = 'white';
+            div.style.padding = '8px 12px';
+            div.style.borderRadius = '6px';
+            div.style.boxShadow = '0 2px 6px rgba(0,0,0,0.3)';
+
+            div.innerHTML = `
+                <label style="font-size: 11px; font-weight: bold; display: block; margin-bottom: 4px; color: #2c3e50;">
+                    🗓 Data Imagem (Sentinel-2)
+                </label>
+                <input type="date" id="sentinel-date" value="2024-05-01" style="font-size: 12px; padding: 3px; border: 1px solid #ccc; border-radius: 4px;">
+            `;
+            
+            L.DomEvent.disableClickPropagation(div);
+            L.DomEvent.disableScrollPropagation(div);
+            return div;
+        };
+        dateControl.addTo(map);
+
+        // Evento de alteração de data WMS
+        document.getElementById('sentinel-date').addEventListener('change', function(e) {
+            var novaData = e.target.value;
+            if (novaData) {
+                sentinelHubWMS.setParams({ TIME: novaData });
+            }
+        });
+
+        // Legenda Flutuante do Evalscript
+        var legendControl = L.control({ position: 'bottomleft' });
+        legendControl.onAdd = function(map) {
+            var div = L.DomUtil.create('div', 'legend-control');
+            div.innerHTML = `
+                <h4>Análise Vegetacional</h4>
+                <div class="legend-item">
+                    <span class="legend-color" style="background: rgba(0, 204, 51, 0.9);"></span>
+                    <span><b>Verde:</b> Vigor Alto (NDVI > 0.4)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-color" style="background: rgba(230, 26, 26, 0.9);"></span>
+                    <span><b>Vermelho:</b> Estresse / Solo Exposto</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-color" style="background: rgba(0,0,0,0.05); border: 1px dashed #999;"></span>
+                    <span><b>Transparente:</b> Sem Dados</span>
+                </div>
+            `;
+            return div;
+        };
+
+        L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
+
+        // ============================================================
+        // 6. EVENTOS DO MAPA
+        // ============================================================
+        
+        map.on('zoomend', function() {
+            if (map.getZoom() >= 11) {
+                document.getElementById('map').classList.add('map-zoomed-in');
+            } else {
+                document.getElementById('map').classList.remove('map-zoomed-in');
+            }
+        });
+
+        // Recalcular gráficos ao mover ou alterar o zoom no mapa
+        map.on('moveend', function() {
+            atualizarGraficosPorVisibilidade();
+        });
+
+        // Exibir/Esconder legenda e gerenciar ativação de camadas
+        map.on('overlayadd', function(e) {
+            if (e.name === "Pontos de Plantio") {
+                camadaPlantiosAtiva = true;
+                atualizarGraficosPorVisibilidade();
+            }
+            if (e.name === "Análise Vegetação (Sentinel-2 WMS)") {
+                legendControl.addTo(map);
+            }
+        });
+
+        map.on('overlayremove', function(e) {
+            if (e.name === "Pontos de Plantio") {
+                camadaPlantiosAtiva = false;
+                atualizarGraficosComDados([]);
+            }
+            if (e.name === "Análise Vegetação (Sentinel-2 WMS)") {
+                legendControl.remove();
+            }
+        });
+
+        // ============================================================
+        // 7. CORES E ESTILOS
+        // ============================================================
         var baseColors = ['#1abc9c', '#f1c40f', '#e74c3c', '#9b59b6', '#34495e', '#e67e22'];
         var tipoColors = {};
         function getTipoColor(tipo) {
@@ -207,7 +384,6 @@ function evaluatePixel(sample) {
             return tipoColors[tipo];
         }
 
-        // 7. Funções de Estilo
         var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
         var styleArea = { color: "#f39c12", weight: 2.5, fillOpacity: 0.2, interactive: true };
         var stylePlantios = function(feature) {
@@ -215,7 +391,27 @@ function evaluatePixel(sample) {
             return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
         };
 
-        // 8. Carregador Genérico de GeoJSON
+        function popupPlantios(feature, layer) {
+            if (feature.properties) {
+                var p = feature.properties;
+                var content = "<div style='font-size:13px; max-height: 250px; overflow-y: auto;'>";
+                for (var key in p) {
+                    var val = p[key];
+                    if (val !== null && val !== "" && val !== " ") {
+                        if (typeof val === 'string' && val.startsWith('http')) {
+                            val = "<a href='" + val + "' target='_blank'>Acessar Link</a>";
+                        }
+                        content += "<b>" + key + ":</b> " + val + "<br/>";
+                    }
+                }
+                content += "</div>";
+                layer.bindPopup(content);
+            }
+        }
+
+        // ============================================================
+        // 8. CARREGAMENTO DOS GEOJSONS
+        // ============================================================
         async function loadGeoJSON(url, style, onEachFeature, layerName, visibleByDefault) {
             try {
                 const response = await fetch(url);
@@ -243,130 +439,14 @@ function evaluatePixel(sample) {
                 });
                 
                 layerControl.addOverlay(layer, layerName);
-                if (visibleByDefault) {
-                    layer.addTo(map);
-                }
+                if (visibleByDefault) layer.addTo(map);
                 return layer;
             } catch (e) {
-                console.warn("Aviso: Não foi possível carregar " + url + ".", e);
+                console.warn("Aviso ao carregar " + url + ":", e);
                 return null;
             }
         }
 
-        // 9. Popups para Pontos de Plantio
-        function popupPlantios(feature, layer) {
-            if (feature.properties) {
-                var p = feature.properties;
-                var content = "<div style='font-size:13px; max-height: 250px; overflow-y: auto;'>";
-                for (var key in p) {
-                    var val = p[key];
-                    if (val !== null && val !== "" && val !== " ") {
-                        if (typeof val === 'string' && val.startsWith('http')) {
-                            val = "<a href='" + val + "' target='_blank'>Acessar Link</a>";
-                        }
-                        content += "<b>" + key + ":</b> " + val + "<br/>";
-                    }
-                }
-                content += "</div>";
-                layer.bindPopup(content);
-            }
-        }
-
-        // 10. Botão Home
-        var homeControl = L.control({ position: 'topleft' });
-        homeControl.onAdd = function(map) {
-            var btn = L.DomUtil.create('button', 'home-button');
-            btn.innerHTML = '🏠 Home';
-            btn.title = 'Voltar para a visão geral';
-            btn.style.padding = '5px 10px';
-            btn.style.cursor = 'pointer';
-            btn.style.background = 'white';
-            btn.style.border = '2px solid rgba(0,0,0,0.2)';
-            btn.style.borderRadius = '4px';
-            btn.style.fontWeight = 'bold';
-            btn.onclick = function() {
-                if (window.homeBounds) map.fitBounds(window.homeBounds);
-            };
-            return btn;
-        };
-        homeControl.addTo(map);
-
-        L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
-
-        // 11. Eventos de Zoom
-        map.on('zoomend', function() {
-            if (map.getZoom() >= 11) {
-                document.getElementById('map').classList.add('map-zoomed-in');
-            } else {
-                document.getElementById('map').classList.remove('map-zoomed-in');
-            }
-        });
-
-        // 12. Gráfico SATVEG
-        var satvegChart = null;
-        function gerarGraficoSatveg(nome) {
-            var ctx = document.getElementById('chartTemporal');
-            if (!ctx) return;
-            if (satvegChart) satvegChart.destroy();
-            
-            var meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-            var baseNdvi = Math.random() * 0.3 + 0.4;
-            var ndviData = meses.map((m, i) => (baseNdvi + Math.sin(i * 0.8) * 0.25 + (Math.random()*0.1 - 0.05)).toFixed(2));
-            var baseNdwi = Math.random() * 0.2 - 0.1;
-            var ndwiData = meses.map((m, i) => (baseNdwi + Math.cos(i * 0.8) * 0.3 + (Math.random()*0.1 - 0.05)).toFixed(2));
-            
-            satvegChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: meses,
-                    datasets: [
-                        {
-                            label: 'NDVI',
-                            data: ndviData,
-                            yAxisID: 'y',
-                            borderColor: '#27ae60',
-                            backgroundColor: 'rgba(39, 174, 96, 0.1)',
-                            tension: 0.4,
-                            fill: true,
-                            pointRadius: 3
-                        },
-                        {
-                            label: 'NDWI',
-                            data: ndwiData,
-                            yAxisID: 'y1',
-                            borderColor: '#2980b9',
-                            backgroundColor: 'rgba(41, 128, 185, 0.1)',
-                            tension: 0.4,
-                            fill: true,
-                            pointRadius: 3
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        title: { display: true, text: 'Perfil Temporal: ' + nome, font: { size: 12 } },
-                        legend: { position: 'top', labels: { boxWidth: 10, font: { size: 10 } } }
-                    },
-                    scales: {
-                        y: { type: 'linear', display: true, position: 'left', min: -1, max: 1, title: { display: true, text: 'NDVI', color: '#27ae60', font: { size: 10 } } },
-                        y1: { type: 'linear', display: true, position: 'right', min: -1, max: 1, title: { display: true, text: 'NDWI', color: '#2980b9', font: { size: 10 } }, grid: { drawOnChartArea: false } }
-                    }
-                }
-            });
-        }
-        gerarGraficoSatveg("Aguardando clique na área...");
-
-        function onAreaClick(feature, layer) {
-            layer.on('click', function(e) {
-                var nome = (feature.properties && (feature.properties.nome || feature.properties.NM_MUN)) ? (feature.properties.nome || feature.properties.NM_MUN) : "Área Selecionada";
-                gerarGraficoSatveg(nome);
-                L.DomEvent.stopPropagation(e);
-            });
-        }
-
-        // 13. Execução de Carga das Camadas GeoJSON
         loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
         loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', true);
 
@@ -376,28 +456,46 @@ function evaluatePixel(sample) {
                 return res.json();
             })
             .then(data => {
-                var layerPlantios = L.geoJSON(data, {
+                dadosCompletosPlantios = data.features || [];
+
+                layerPlantiosRef = L.geoJSON(data, {
                     pointToLayer: function(feature, latlng) {
                         return L.circleMarker(latlng, stylePlantios(feature));
                     },
                     onEachFeature: popupPlantios
                 });
                 
-                layerControl.addOverlay(layerPlantios, "Pontos de Plantio");
-                layerPlantios.addTo(map);
+                layerControl.addOverlay(layerPlantiosRef, "Pontos de Plantio");
+                layerPlantiosRef.addTo(map);
 
-                window.homeBounds = layerPlantios.getBounds();
+                window.homeBounds = layerPlantiosRef.getBounds();
                 map.fitBounds(window.homeBounds);
 
-                if (data.features) {
-                    gerarGraficos(data.features);
-                }
+                inicializarGraficos();
+                atualizarGraficosPorVisibilidade();
             }).catch(e => {
                 console.warn("Aviso ao carregar plantios.geojson:", e);
+                inicializarGraficos();
             });
 
-        // 14. Geração dos Gráficos Laterais (Chart.js)
-        function gerarGraficos(features) {
+        // ============================================================
+        // 9. FILTRAGEM E RECALCULO DOS GRÁFICOS
+        // ============================================================
+        function atualizarGraficosPorVisibilidade() {
+            if (!camadaPlantiosAtiva || dadosCompletosPlantios.length === 0) return;
+
+            var bounds = map.getBounds();
+            var featuresVisiveis = dadosCompletosPlantios.filter(function(feature) {
+                if (!feature.geometry || !feature.geometry.coordinates) return false;
+                var coords = feature.geometry.coordinates;
+                var latLng = L.latLng(coords[1], coords[0]);
+                return bounds.contains(latLng);
+            });
+
+            atualizarGraficosComDados(featuresVisiveis);
+        }
+
+        function atualizarGraficosComDados(features) {
             let statusCount = {};
             let tipoArea = {};
             let contratadaArea = {};
@@ -418,74 +516,108 @@ function evaluatePixel(sample) {
                 contratadaArea[contratada] = (contratadaArea[contratada] || 0) + area;
             });
 
-            new Chart(document.getElementById('chartStatus'), {
+            if (chartStatus) {
+                chartStatus.data.labels = Object.keys(statusCount);
+                chartStatus.data.datasets[0].data = Object.values(statusCount);
+                chartStatus.update('active');
+            }
+
+            if (chartTipo) {
+                let labelsTipo = Object.keys(tipoArea);
+                chartTipo.data.labels = labelsTipo;
+                chartTipo.data.datasets[0].data = Object.values(tipoArea);
+                chartTipo.data.datasets[0].backgroundColor = labelsTipo.map(tipo => getTipoColor(tipo));
+                chartTipo.update('active');
+            }
+
+            if (chartContratada) {
+                chartContratada.data.labels = Object.keys(contratadaArea);
+                chartContratada.data.datasets[0].data = Object.values(contratadaArea);
+                chartContratada.update('active');
+            }
+        }
+
+        function inicializarGraficos() {
+            chartStatus = new Chart(document.getElementById('chartStatus'), {
                 type: 'bar',
-                data: {
-                    labels: Object.keys(statusCount),
-                    datasets: [{
-                        label: 'Número de Plantios',
-                        data: Object.values(statusCount),
-                        backgroundColor: '#3498db',
-                        borderRadius: 4
-                    }]
-                },
+                data: { labels: [], datasets: [{ label: 'Plantios', data: [], backgroundColor: '#3498db', borderRadius: 4 }] },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { title: { display: true, text: 'Status dos Contratos' }, legend: { display: false } },
+                    plugins: { title: { display: true, text: 'Status dos Contratos (Visíveis)' }, legend: { display: false } },
                     scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
                 }
             });
 
-            let labelsTipo = Object.keys(tipoArea);
-            let backgroundColorsTipo = labelsTipo.map(tipo => getTipoColor(tipo));
-
-            new Chart(document.getElementById('chartAreaTipo'), {
+            chartTipo = new Chart(document.getElementById('chartAreaTipo'), {
                 type: 'doughnut',
-                data: {
-                    labels: labelsTipo,
-                    datasets: [{
-                        data: Object.values(tipoArea),
-                        backgroundColor: backgroundColorsTipo
-                    }]
-                },
+                data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
                         title: { display: true, text: 'Área Total (ha) por Tipo' },
-                        legend: { position: 'right' },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    let label = context.label || '';
-                                    if (label) { label += ': '; }
-                                    label += context.parsed.toFixed(2) + ' ha';
-                                    return label;
-                                }
-                            }
-                        }
+                        legend: { position: 'right' }
                     }
                 }
             });
 
-            new Chart(document.getElementById('chartContratada'), {
+            chartContratada = new Chart(document.getElementById('chartContratada'), {
                 type: 'bar',
-                data: {
-                    labels: Object.keys(contratadaArea),
-                    datasets: [{
-                        label: 'Área (ha)',
-                        data: Object.values(contratadaArea),
-                        backgroundColor: '#2ecc71',
-                        borderRadius: 4
-                    }]
-                },
+                data: { labels: [], datasets: [{ label: 'Área (ha)', data: [], backgroundColor: '#2ecc71', borderRadius: 4 }] },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: { title: { display: true, text: 'Hectares por Contratada' }, legend: { display: false } },
-                    scales: { y: { beginAtZero: true, title: { display: true, text: 'ha' } } }
+                    scales: { y: { beginAtZero: true } }
                 }
+            });
+        }
+
+        // ============================================================
+        // 10. GRÁFICO TEMPORAL
+        // ============================================================
+        function gerarGraficoSatveg(nome) {
+            var ctx = document.getElementById('chartTemporal');
+            if (!ctx) return;
+            if (satvegChart) satvegChart.destroy();
+            
+            var meses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+            var baseNdvi = Math.random() * 0.3 + 0.4;
+            var ndviData = meses.map((m, i) => (baseNdvi + Math.sin(i * 0.8) * 0.25 + (Math.random()*0.1 - 0.05)).toFixed(2));
+            var baseNdwi = Math.random() * 0.2 - 0.1;
+            var ndwiData = meses.map((m, i) => (baseNdwi + Math.cos(i * 0.8) * 0.3 + (Math.random()*0.1 - 0.05)).toFixed(2));
+            
+            satvegChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: meses,
+                    datasets: [
+                        { label: 'NDVI', data: ndviData, yAxisID: 'y', borderColor: '#27ae60', backgroundColor: 'rgba(39, 174, 96, 0.1)', tension: 0.4, fill: true },
+                        { label: 'NDWI', data: ndwiData, yAxisID: 'y1', borderColor: '#2980b9', backgroundColor: 'rgba(41, 128, 185, 0.1)', tension: 0.4, fill: true }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: { display: true, text: 'Perfil Temporal: ' + nome, font: { size: 12 } },
+                        legend: { position: 'top' }
+                    },
+                    scales: {
+                        y: { min: -1, max: 1, position: 'left', title: { display: true, text: 'NDVI', color: '#27ae60' } },
+                        y1: { min: -1, max: 1, position: 'right', title: { display: true, text: 'NDWI', color: '#2980b9' }, grid: { drawOnChartArea: false } }
+                    }
+                }
+            });
+        }
+        gerarGraficoSatveg("Aguardando clique na área...");
+
+        function onAreaClick(feature, layer) {
+            layer.on('click', function(e) {
+                var nome = (feature.properties && (feature.properties.nome || feature.properties.NM_MUN)) ? (feature.properties.nome || feature.properties.NM_MUN) : "Área Selecionada";
+                gerarGraficoSatveg(nome);
+                L.DomEvent.stopPropagation(e);
             });
         }
     </script>
