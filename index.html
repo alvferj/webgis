@@ -131,9 +131,7 @@
         <div id="sidebar">
             <h3>Gráficos Dinâmicos (Área Visível)</h3>
             
-            <div class="chart-container">
-                <canvas id="chartStatus"></canvas>
-            </div>
+            <!-- Gráfico de Status desabilitado -->
             
             <div class="chart-container">
                 <canvas id="chartAreaTipo"></canvas>
@@ -170,7 +168,6 @@
         var camadaPlantiosAtiva = true;
         var layerPlantiosRef = null;
 
-        var chartStatus = null;
         var chartTipo = null;
         var chartContratada = null;
         var satvegChart = null;
@@ -191,7 +188,7 @@
         }).addTo(map);
 
         // ============================================================
-        // 3. CAMADA SENTINEL-2 WMS
+        // 3. CAMADA SENTINEL-2 WMS COM CORREÇÃO DE TIME E EVALSCRIPT
         // ============================================================
         var evalscriptCustomizado = `//VERSION=3
 function setup() {
@@ -226,14 +223,14 @@ function evaluatePixel(sample) {
         function calcularIntervaloData(dateString) {
             var dataFim = new Date(dateString);
             var dataInicio = new Date(dateString);
-            dataInicio.setDate(dataFim.getDate() - 15);
+            dataInicio.setDate(dataFim.getDate() - 30); // Aumentado para 30 dias para garantir cobertura sem nuvens/lacunas
             return dataInicio.toISOString().split('T')[0] + '/' + dataFim.toISOString().split('T')[0];
         }
 
         var instanceID = '59a3204c-90c8-4420-8613-6a8093b1675c';
         
         var sentinelHubWMS = L.tileLayer.wms('https://services.sentinel-hub.com/ogc/wms/' + instanceID, {
-            layers: 'DEFAULT',
+            layers: 'NDVI', // Alterado para a camada padrão 'NDVI' ou 'NDVI-ANALYSIS' configurada no Dashboard
             format: 'image/png',
             transparent: true,
             version: '1.3.0',
@@ -440,7 +437,6 @@ function evaluatePixel(sample) {
             }
         }
 
-        // Execução sequencial dos GeoJSONs
         loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
         loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', true);
 
@@ -490,31 +486,20 @@ function evaluatePixel(sample) {
         }
 
         function atualizarGraficosComDados(features) {
-            let statusCount = {};
             let tipoArea = {};
             let contratadaArea = {};
 
             features.forEach(f => {
                 let p = f.properties || {};
-                let status = p.Status_con ? p.Status_con.trim() : "Não informado";
                 let tipo = p.tipo ? p.tipo.trim() : "Outro";
                 let area = parseFloat(p.area_ha) || 0;
                 let contratada = p.Contratada || p.contratada;
                 contratada = contratada ? contratada.trim() : "Não informada";
                 if (contratada === "" || contratada === "-") contratada = "Não informada";
 
-                status = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
-
-                statusCount[status] = (statusCount[status] || 0) + 1;
                 tipoArea[tipo] = (tipoArea[tipo] || 0) + area;
                 contratadaArea[contratada] = (contratadaArea[contratada] || 0) + area;
             });
-
-            if (chartStatus) {
-                chartStatus.data.labels = Object.keys(statusCount);
-                chartStatus.data.datasets[0].data = Object.values(statusCount);
-                chartStatus.update('active');
-            }
 
             if (chartTipo) {
                 let labelsTipo = Object.keys(tipoArea);
@@ -532,17 +517,6 @@ function evaluatePixel(sample) {
         }
 
         function inicializarGraficos() {
-            chartStatus = new Chart(document.getElementById('chartStatus'), {
-                type: 'bar',
-                data: { labels: [], datasets: [{ label: 'Plantios', data: [], backgroundColor: '#3498db', borderRadius: 4 }] },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { title: { display: true, text: 'Status dos Contratos (Visíveis)' }, legend: { display: false } },
-                    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
-                }
-            });
-
             chartTipo = new Chart(document.getElementById('chartAreaTipo'), {
                 type: 'doughnut',
                 data: { labels: [], datasets: [{ data: [], backgroundColor: [] }] },
