@@ -9,7 +9,6 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
     <style>
-        /* Estilos do Layout */
         body, html { 
             margin: 0; 
             padding: 0; 
@@ -48,8 +47,6 @@
             border-left: 2px solid #bdc3c7; 
             min-width: 350px; 
         }
-
-        /* Container dos Gráficos */
         .chart-container { 
             width: 100%; 
             height: 180px; 
@@ -75,8 +72,6 @@
             margin-top: 20px; 
             box-shadow: 0 1px 3px rgba(0,0,0,0.1); 
         }
-
-        /* Tooltips nos Municípios */
         .leaflet-tooltip.city-label {
             background: none; 
             border: none; 
@@ -90,8 +85,6 @@
         .map-zoomed-in .leaflet-tooltip.city-label { 
             display: block; 
         }
-
-        /* Legenda Flutuante do Evalscript */
         .legend-control {
             background: rgba(255, 255, 255, 0.92);
             padding: 10px 14px;
@@ -159,8 +152,8 @@
             </p>
 
             <div class="info-box">
-                <p><strong>Janela Swipe:</strong> Arraste a barra vertical central no mapa para comparar a imagem de alta resolução Esri (esquerda) com a análise Sentinel-2 (direita).</p>
-                <p><strong>Sentinel-2:</strong> Selecione a data no canto superior direito para atualizar o período da imagem.</p>
+                <p><strong>Janela Swipe:</strong> Arraste o divisor central no mapa para comparar o basemap de alta resolução (esquerda) com a análise Sentinel-2 (direita).</p>
+                <p><strong>Sentinel-2:</strong> Selecione a data no canto superior direito para atualizar a imagem.</p>
             </div>
         </div>
     </div>
@@ -168,7 +161,7 @@
     <!-- Bibliotecas JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Plugin Leaflet Side-by-Side (Janela Swipe) -->
+    <!-- Plugin Leaflet Side-by-Side (Swipe) -->
     <script src="https://cdn.jsdelivr.net/gh/jjimenezshaw/leaflet-side-by-side@gh-pages/leaflet-side-by-side.min.js"></script>
 
     <script>
@@ -200,7 +193,7 @@
         }).addTo(map);
 
         // ============================================================
-        // 3. CAMADA SENTINEL-2 WMS COM EVALSCRIPT & ENDPOINT COPERNICUS
+        // 3. CAMADA SENTINEL-2 WMS COM EVALSCRIPT
         // ============================================================
         var evalscriptCustomizado = `//VERSION=3
 function setup() {
@@ -232,19 +225,17 @@ function evaluatePixel(sample) {
   }
 }`;
 
-        // Função para gerar o intervalo de busca de 10 dias até a data final
         function calcularIntervaloData(dateString) {
             var dataFim = new Date(dateString);
             var dataInicio = new Date(dateString);
-            dataInicio.setDate(dataFim.getDate() - 10);
+            dataInicio.setDate(dataFim.getDate() - 15);
             return dataInicio.toISOString().split('T')[0] + '/' + dataFim.toISOString().split('T')[0];
         }
 
         var instanceID = '59a3204c-90c8-4420-8613-6a8093b1675c';
         
-        // Tentativa de Endpoint no Copernicus Data Space Ecosystem (CDSE)
-        // Se a sua conta for do Sentinel Hub clássico, altere o prefixo da URL para 'https://services.sentinel-hub.com/ogc/wms/'
-        var sentinelHubWMS = L.tileLayer.wms('https://sh.dataspace.copernicus.eu/ogc/wms/' + instanceID, {
+        // URL configurada com fallback para a API do Sentinel Hub
+        var sentinelHubWMS = L.tileLayer.wms('https://services.sentinel-hub.com/ogc/wms/' + instanceID, {
             layers: 'DEFAULT',
             format: 'image/png',
             transparent: true,
@@ -252,14 +243,13 @@ function evaluatePixel(sample) {
             TIME: calcularIntervaloData('2024-05-01'),
             evalscript: evalscriptCustomizado,
             maxZoom: 18,
-            attribution: '&copy; Copernicus Data Space / Sentinel Hub'
+            attribution: '&copy; Sentinel Hub'
         }).addTo(map);
 
         // ============================================================
-        // 4. ATIVAÇÃO DA JANELA SWIPE (SIDE-BY-SIDE)
+        // 4. ATIVAÇÃO DO PLUGIN SWIPE (SIDE-BY-SIDE)
         // ============================================================
-        // A camada Esri fica na ESQUERDA e o Sentinel-2 WMS na DIREITA
-        var sideBySideControl = L.control.sideBySide(esriImagery, sentinelHubWMS).addTo(map);
+        L.control.sideBySide(esriImagery, sentinelHubWMS).addTo(map);
 
         // ============================================================
         // 5. CONTROLE DE CAMADAS
@@ -278,8 +268,6 @@ function evaluatePixel(sample) {
         // ============================================================
         // 6. CONTROLES CUSTOMIZADOS
         // ============================================================
-        
-        // Botão Home
         var homeControl = L.control({ position: 'topleft' });
         homeControl.onAdd = function(map) {
             var btn = L.DomUtil.create('button', 'home-button');
@@ -298,7 +286,6 @@ function evaluatePixel(sample) {
         };
         homeControl.addTo(map);
 
-        // Seletor de Data (Sentinel-2)
         var dateControl = L.control({ position: 'topright' });
         dateControl.onAdd = function(map) {
             var div = L.DomUtil.create('div', 'leaflet-bar leaflet-control-date');
@@ -320,7 +307,6 @@ function evaluatePixel(sample) {
         };
         dateControl.addTo(map);
 
-        // Evento de alteração de data WMS
         document.getElementById('sentinel-date').addEventListener('change', function(e) {
             var novaData = e.target.value;
             if (novaData) {
@@ -328,7 +314,6 @@ function evaluatePixel(sample) {
             }
         });
 
-        // Legenda Flutuante do Evalscript
         var legendControl = L.control({ position: 'bottomleft' });
         legendControl.onAdd = function(map) {
             var div = L.DomUtil.create('div', 'legend-control');
@@ -356,7 +341,6 @@ function evaluatePixel(sample) {
         // ============================================================
         // 7. EVENTOS DO MAPA
         // ============================================================
-        
         map.on('zoomend', function() {
             if (map.getZoom() >= 11) {
                 document.getElementById('map').classList.add('map-zoomed-in');
@@ -365,7 +349,6 @@ function evaluatePixel(sample) {
             }
         });
 
-        // Recalcular gráficos ao mover ou alterar o zoom no mapa
         map.on('moveend', function() {
             atualizarGraficosPorVisibilidade();
         });
