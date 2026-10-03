@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Painel WebGIS - Gestão de Plantios com Swipe</title>
+    <title>Painel WebGIS - Gestão de Plantios</title>
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -124,7 +124,7 @@
 </head>
 <body>
     <div id="header">
-        <h2>Painel WebGIS - Gestão de Plantios com Janela Swipe</h2>
+        <h2>Painel WebGIS - Gestão de Plantios</h2>
     </div>
     <div id="main">
         <div id="map"></div>
@@ -152,8 +152,8 @@
             </p>
 
             <div class="info-box">
-                <p><strong>Janela Swipe:</strong> Arraste o divisor central no mapa para comparar o basemap de alta resolução (esquerda) com a análise Sentinel-2 (direita).</p>
-                <p><strong>Sentinel-2:</strong> Selecione a data no canto superior direito para atualizar a imagem.</p>
+                <p><strong>Navegação:</strong> Mova ou dê zoom no mapa para atualizar os gráficos dinâmicos.</p>
+                <p><strong>Sentinel-2:</strong> Selecione a data no canto superior direito para alterar a imagem WMS.</p>
             </div>
         </div>
     </div>
@@ -161,8 +161,6 @@
     <!-- Bibliotecas JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Plugin Leaflet Side-by-Side (Swipe) -->
-    <script src="https://cdn.jsdelivr.net/gh/jjimenezshaw/leaflet-side-by-side@gh-pages/leaflet-side-by-side.min.js"></script>
 
     <script>
         // ============================================================
@@ -193,7 +191,7 @@
         }).addTo(map);
 
         // ============================================================
-        // 3. CAMADA SENTINEL-2 WMS COM EVALSCRIPT
+        // 3. CAMADA SENTINEL-2 WMS
         // ============================================================
         var evalscriptCustomizado = `//VERSION=3
 function setup() {
@@ -234,7 +232,6 @@ function evaluatePixel(sample) {
 
         var instanceID = '59a3204c-90c8-4420-8613-6a8093b1675c';
         
-        // URL configurada com fallback para a API do Sentinel Hub
         var sentinelHubWMS = L.tileLayer.wms('https://services.sentinel-hub.com/ogc/wms/' + instanceID, {
             layers: 'DEFAULT',
             format: 'image/png',
@@ -244,15 +241,10 @@ function evaluatePixel(sample) {
             evalscript: evalscriptCustomizado,
             maxZoom: 18,
             attribution: '&copy; Sentinel Hub'
-        }).addTo(map);
+        });
 
         // ============================================================
-        // 4. ATIVAÇÃO DO PLUGIN SWIPE (SIDE-BY-SIDE)
-        // ============================================================
-        L.control.sideBySide(esriImagery, sentinelHubWMS).addTo(map);
-
-        // ============================================================
-        // 5. CONTROLE DE CAMADAS
+        // 4. CONTROLE DE CAMADAS
         // ============================================================
         var baseMaps = {
             "Satélite (Esri Alta Resolução)": esriImagery,
@@ -266,7 +258,7 @@ function evaluatePixel(sample) {
         var layerControl = L.control.layers(baseMaps, overlayMaps, { collapsed: false }).addTo(map);
 
         // ============================================================
-        // 6. CONTROLES CUSTOMIZADOS
+        // 5. CONTROLES CUSTOMIZADOS
         // ============================================================
         var homeControl = L.control({ position: 'topleft' });
         homeControl.onAdd = function(map) {
@@ -334,12 +326,11 @@ function evaluatePixel(sample) {
             `;
             return div;
         };
-        legendControl.addTo(map);
 
         L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
 
         // ============================================================
-        // 7. EVENTOS DO MAPA
+        // 6. EVENTOS DO MAPA
         // ============================================================
         map.on('zoomend', function() {
             if (map.getZoom() >= 11) {
@@ -353,8 +344,28 @@ function evaluatePixel(sample) {
             atualizarGraficosPorVisibilidade();
         });
 
+        map.on('overlayadd', function(e) {
+            if (e.name === "Pontos de Plantio") {
+                camadaPlantiosAtiva = true;
+                atualizarGraficosPorVisibilidade();
+            }
+            if (e.name === "Análise Vegetação (Sentinel-2 WMS)") {
+                legendControl.addTo(map);
+            }
+        });
+
+        map.on('overlayremove', function(e) {
+            if (e.name === "Pontos de Plantio") {
+                camadaPlantiosAtiva = false;
+                atualizarGraficosComDados([]);
+            }
+            if (e.name === "Análise Vegetação (Sentinel-2 WMS)") {
+                legendControl.remove();
+            }
+        });
+
         // ============================================================
-        // 8. CORES E ESTILOS GEOJSON
+        // 7. CORES E ESTILOS GEOJSON
         // ============================================================
         var baseColors = ['#1abc9c', '#f1c40f', '#e74c3c', '#9b59b6', '#34495e', '#e67e22'];
         var tipoColors = {};
@@ -392,12 +403,12 @@ function evaluatePixel(sample) {
         }
 
         // ============================================================
-        // 9. CARREGAMENTO DOS GEOJSONS
+        // 8. CARREGAMENTO ROBUSTO DOS GEOJSONS
         // ============================================================
         async function loadGeoJSON(url, style, onEachFeature, layerName, visibleByDefault) {
             try {
                 const response = await fetch(url);
-                if (!response.ok) throw new Error("Status " + response.status);
+                if (!response.ok) throw new Error("Erro " + response.status + " ao buscar " + url);
                 const data = await response.json();
                 
                 var layer = L.geoJSON(data, {
@@ -424,11 +435,12 @@ function evaluatePixel(sample) {
                 if (visibleByDefault) layer.addTo(map);
                 return layer;
             } catch (e) {
-                console.warn("Aviso ao carregar " + url + ":", e);
+                console.error("Falha na carga do arquivo:", e);
                 return null;
             }
         }
 
+        // Execução sequencial dos GeoJSONs
         loadGeoJSON('SP_municipios.geojson', styleMunicipios, null, 'Municípios SP', true);
         loadGeoJSON('area.geojson', styleArea, onAreaClick, 'Polígonos de Área', true);
 
@@ -456,12 +468,12 @@ function evaluatePixel(sample) {
                 inicializarGraficos();
                 atualizarGraficosPorVisibilidade();
             }).catch(e => {
-                console.warn("Aviso ao carregar plantios.geojson:", e);
+                console.error("Erro em plantios.geojson:", e);
                 inicializarGraficos();
             });
 
         // ============================================================
-        // 10. FILTRAGEM E RECALCULO DOS GRÁFICOS
+        // 9. FILTRAGEM E RECALCULO DOS GRÁFICOS
         // ============================================================
         function atualizarGraficosPorVisibilidade() {
             if (!camadaPlantiosAtiva || dadosCompletosPlantios.length === 0) return;
@@ -557,7 +569,7 @@ function evaluatePixel(sample) {
         }
 
         // ============================================================
-        // 11. GRÁFICO TEMPORAL
+        // 10. GRÁFICO TEMPORAL
         // ============================================================
         function gerarGraficoSatveg(nome) {
             var ctx = document.getElementById('chartTemporal');
