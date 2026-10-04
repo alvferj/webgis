@@ -131,8 +131,6 @@
         <div id="sidebar">
             <h3>Gráficos Dinâmicos (Área Visível)</h3>
             
-            <!-- Gráfico de Status desabilitado -->
-            
             <div class="chart-container">
                 <canvas id="chartAreaTipo"></canvas>
             </div>
@@ -188,31 +186,21 @@
         }).addTo(map);
 
         // ============================================================
-        // 3. CAMADA SENTINEL-2 WMS COM CORREÇÃO DE TIME E EVALSCRIPT
+        // 3. CAMADA SENTINEL-2 WMS COM EVALSCRIPT E TRATAMENTO DE DATA
         // ============================================================
         var evalscriptCustomizado = `//VERSION=3
 function setup() {
   return {
     input: ["B03", "B04", "B08", "dataMask"],
-    output: { 
-      id: "default",
-      bands: 4, 
-      sampleType: "AUTO" 
-    }
+    output: { id: "default", bands: 4, sampleType: "AUTO" }
   };
 }
-
 function evaluatePixel(sample) {
-  if (sample.dataMask === 0) {
-    return [0, 0, 0, 0];
-  }
-
+  if (sample.dataMask === 0) return [0, 0, 0, 0];
   let denomNdvi = sample.B08 + sample.B04;
   let denomNdwi = sample.B03 + sample.B08;
-
   let ndvi = denomNdvi !== 0 ? (sample.B08 - sample.B04) / denomNdvi : 0;
   let ndwi = denomNdwi !== 0 ? (sample.B03 - sample.B08) / denomNdwi : 0;
-
   if (ndvi > 0.4 && ndwi > 0.1) {
     return [0.0, 0.8, 0.2, 0.9];
   } else {
@@ -223,14 +211,22 @@ function evaluatePixel(sample) {
         function calcularIntervaloData(dateString) {
             var dataFim = new Date(dateString);
             var dataInicio = new Date(dateString);
-            dataInicio.setDate(dataFim.getDate() - 30); // Aumentado para 30 dias para garantir cobertura sem nuvens/lacunas
-            return dataInicio.toISOString().split('T')[0] + '/' + dataFim.toISOString().split('T')[0];
+            dataInicio.setDate(dataFim.getDate() - 45);
+
+            var formatar = function(d) {
+                var ano = d.getUTCFullYear();
+                var mes = String(d.getUTCMonth() + 1).padStart(2, '0');
+                var dia = String(d.getUTCDate()).padStart(2, '0');
+                return ano + '-' + mes + '-' + dia;
+            };
+
+            return formatar(dataInicio) + '/' + formatar(dataFim);
         }
 
         var instanceID = '59a3204c-90c8-4420-8613-6a8093b1675c';
         
         var sentinelHubWMS = L.tileLayer.wms('https://services.sentinel-hub.com/ogc/wms/' + instanceID, {
-            layers: 'NDVI', // Alterado para a camada padrão 'NDVI' ou 'NDVI-ANALYSIS' configurada no Dashboard
+            layers: 'NDVI',
             format: 'image/png',
             transparent: true,
             version: '1.3.0',
@@ -400,7 +396,7 @@ function evaluatePixel(sample) {
         }
 
         // ============================================================
-        // 8. CARREGAMENTO ROBUSTO DOS GEOJSONS
+        // 8. CARREGAMENTO DOS GEOJSONS
         // ============================================================
         async function loadGeoJSON(url, style, onEachFeature, layerName, visibleByDefault) {
             try {
