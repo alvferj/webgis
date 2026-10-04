@@ -186,32 +186,15 @@
         }).addTo(map);
 
         // ============================================================
-        // 3. CAMADA SENTINEL-2 WMS COM EVALSCRIPT E TRATAMENTO DE DATA
+        // 3. CAMADA SENTINEL-2 WMS
         // ============================================================
-        var evalscriptCustomizado = `//VERSION=3
-function setup() {
-  return {
-    input: ["B03", "B04", "B08", "dataMask"],
-    output: { id: "default", bands: 4, sampleType: "AUTO" }
-  };
-}
-function evaluatePixel(sample) {
-  if (sample.dataMask === 0) return [0, 0, 0, 0];
-  let denomNdvi = sample.B08 + sample.B04;
-  let denomNdwi = sample.B03 + sample.B08;
-  let ndvi = denomNdvi !== 0 ? (sample.B08 - sample.B04) / denomNdvi : 0;
-  let ndwi = denomNdwi !== 0 ? (sample.B03 - sample.B08) / denomNdwi : 0;
-  if (ndvi > 0.4 && ndwi > 0.1) {
-    return [0.0, 0.8, 0.2, 0.9];
-  } else {
-    return [0.9, 0.1, 0.1, 0.9];
-  }
-}`;
+        // Evalscript sanitizado sem quebras de linha que possam corromper a URL
+        var evalscriptCustomizado = '//VERSION=3\nfunction setup(){return{input:["B03","B04","B08","dataMask"],output:{id:"default",bands:4,sampleType:"AUTO"}};}function evaluatePixel(sample){if(sample.dataMask===0)return[0,0,0,0];let denomNdvi=sample.B08+sample.B04;let denomNdwi=sample.B03+sample.B08;let ndvi=denomNdvi!==0?(sample.B08-sample.B04)/denomNdvi:0;let ndwi=denomNdwi!==0?(sample.B03-sample.B08)/denomNdwi:0;if(ndvi>0.4&&ndwi>0.1){return[0.0,0.8,0.2,0.9];}else{return[0.9,0.1,0.1,0.9];}}';
 
         function calcularIntervaloData(dateString) {
             var dataFim = new Date(dateString);
             var dataInicio = new Date(dateString);
-            dataInicio.setDate(dataFim.getDate() - 45);
+            dataInicio.setDate(dataFim.getDate() - 30);
 
             var formatar = function(d) {
                 var ano = d.getUTCFullYear();
@@ -234,7 +217,7 @@ function evaluatePixel(sample) {
             evalscript: evalscriptCustomizado,
             maxZoom: 18,
             attribution: '&copy; Sentinel Hub'
-        });
+        }).addTo(map); // Adicionado diretamente ao mapa para garantir visualização inicial
 
         // ============================================================
         // 4. CONTROLE DE CAMADAS
@@ -319,6 +302,7 @@ function evaluatePixel(sample) {
             `;
             return div;
         };
+        legendControl.addTo(map);
 
         L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
 
