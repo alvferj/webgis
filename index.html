@@ -149,7 +149,7 @@
 
             <div class="info-box">
                 <p><strong>Navegação:</strong> Mova ou dê zoom no mapa para atualizar os gráficos dinâmicos.</p>
-                <p><strong>Sentinel-2:</strong> Selecione a data no canto superior direito para alterar a imagem WMS.</p>
+                <p><strong>Sentinel-2:</strong> Selecione a data no canto superior direito (formato YYYY-MM-DD) para alterar a imagem WMS.</p>
             </div>
         </div>
     </div>
@@ -188,9 +188,9 @@
         // ============================================================
         // 3. CAMADA SENTINEL-2 WMS
         // ============================================================
-        // Evalscript sanitizado sem quebras de linha que possam corromper a URL
         var evalscriptCustomizado = '//VERSION=3\nfunction setup(){return{input:["B03","B04","B08","dataMask"],output:{id:"default",bands:4,sampleType:"AUTO"}};}function evaluatePixel(sample){if(sample.dataMask===0)return[0,0,0,0];let denomNdvi=sample.B08+sample.B04;let denomNdwi=sample.B03+sample.B08;let ndvi=denomNdvi!==0?(sample.B08-sample.B04)/denomNdvi:0;let ndwi=denomNdwi!==0?(sample.B03-sample.B08)/denomNdwi:0;if(ndvi>0.4&&ndwi>0.1){return[0.0,0.8,0.2,0.9];}else{return[0.9,0.1,0.1,0.9];}}';
 
+        // Formata e garante o intervalo YYYY-MM-DD/YYYY-MM-DD
         function calcularIntervaloData(dateString) {
             var dataFim = new Date(dateString);
             var dataInicio = new Date(dateString);
@@ -217,7 +217,7 @@
             evalscript: evalscriptCustomizado,
             maxZoom: 18,
             attribution: '&copy; Sentinel Hub'
-        }).addTo(map); // Adicionado diretamente ao mapa para garantir visualização inicial
+        }).addTo(map);
 
         // ============================================================
         // 4. CONTROLE DE CAMADAS
@@ -264,7 +264,7 @@
 
             div.innerHTML = `
                 <label style="font-size: 11px; font-weight: bold; display: block; margin-bottom: 4px; color: #2c3e50;">
-                    🗓 Data Imagem (Sentinel-2)
+                    🗓 Data (YYYY-MM-DD)
                 </label>
                 <input type="date" id="sentinel-date" value="2024-05-01" style="font-size: 12px; padding: 3px; border: 1px solid #ccc; border-radius: 4px;">
             `;
@@ -276,7 +276,7 @@
         dateControl.addTo(map);
 
         document.getElementById('sentinel-date').addEventListener('change', function(e) {
-            var novaData = e.target.value;
+            var novaData = e.target.value; // Retorna automaticamente em formato YYYY-MM-DD
             if (novaData) {
                 sentinelHubWMS.setParams({ TIME: calcularIntervaloData(novaData) });
             }
@@ -355,7 +355,10 @@
         }
 
         var styleMunicipios = { color: "#cccccc", weight: 1.5, fillOpacity: 0.05, opacity: 0.8, interactive: false };
-        var styleArea = { color: "#f39c12", weight: 2.5, fillOpacity: 0.2, interactive: true };
+        
+        // Estilo dos Polígonos de Área ajustado para sem preenchimento (fillOpacity: 0)
+        var styleArea = { color: "#f39c12", weight: 2.5, fillOpacity: 0, interactive: true };
+        
         var stylePlantios = function(feature) {
             var tipo = feature.properties ? feature.properties.tipo : "Outro";
             return { pane: 'markerPane', radius: 7, fillColor: getTipoColor(tipo), color: "#fff", weight: 1.5, fillOpacity: 0.9 };
