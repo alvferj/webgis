@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -180,7 +181,7 @@
         var satvegChart = null;
         // Endpoint protegido opcional: { observations: [{date, ndvi, ndwi}] }.
         // Não incluir credenciais no HTML público.
-        var WEBGIS_API_BASE = '';
+        var WEBGIS_API_BASE = 'https://webgis-sentinel-api.webgis-sentinel-api.workers.dev';
         var NDVI_SERIES_ENDPOINT = WEBGIS_API_BASE ? WEBGIS_API_BASE.replace(/\/+$/, '') + '/timeseries' : '';
 
         // ============================================================
@@ -201,7 +202,7 @@
         // ============================================================
         // 3. CAMADA SENTINEL-2 WMS
         // ============================================================
-        // Rampa contínua RdYlGn. A escala fixa (-1 a 1) mantém comparabilidade entre datas.
+        function dataLocalHoje() {            var agora = new Date();            return [agora.getFullYear(), String(agora.getMonth() + 1).padStart(2, '0'), String(agora.getDate()).padStart(2, '0')].join('-');        }        // Rampa contínua RdYlGn. A escala fixa (-1 a 1) mantém comparabilidade entre datas.
         // Ajuste min/max por cena exige estatísticas de um backend.
         var evalscriptCustomizado = `//VERSION=3
 function setup() { return { input: [{ bands: ["B04", "B08", "dataMask"] }], output: { id: "default", bands: 4, sampleType: "AUTO" } }; }
@@ -241,7 +242,7 @@ function evaluatePixel(sample) {
             format: 'image/png',
             transparent: true,
             version: '1.3.0',
-            TIME: calcularIntervaloData('2024-05-01'),
+            TIME: calcularIntervaloData(dataLocalHoje()),
             evalscript: evalscriptCustomizado,
             maxZoom: 18,
             attribution: '&copy; Sentinel Hub'
@@ -294,7 +295,7 @@ function evaluatePixel(sample) {
                 <label style="font-size: 11px; font-weight: bold; display: block; margin-bottom: 4px; color: #2c3e50;">
                     🗓 Data final (janela de 30 dias)
                 </label>
-                <input type="date" id="sentinel-date" value="2024-05-01" style="font-size: 12px; padding: 3px; border: 1px solid #ccc; border-radius: 4px;">
+                <input type="date" id="sentinel-date" value="${dataLocalHoje()}" style="font-size: 12px; padding: 3px; border: 1px solid #ccc; border-radius: 4px;">
             `;
             
             L.DomEvent.disableClickPropagation(div);
@@ -417,7 +418,7 @@ function evaluatePixel(sample) {
 
         // ============================================================
         // 8. CARREGAMENTO DOS GEOJSONS
-        // ============================================================        async function loadGeoJSON(url, style, onEachFeature, layerName, visibleByDefault) {
+        async function loadGeoJSON(url, style, onEachFeature, layerName, visibleByDefault) {
             try {
                 const response = await fetch(url);
                 if (!response.ok) throw new Error("Erro " + response.status + " ao buscar " + url);
