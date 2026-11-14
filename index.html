@@ -237,15 +237,16 @@ function evaluatePixel(sample) {
 
         var instanceID = '59a3204c-90c8-4420-8613-6a8093b1675c';
         
-        var sentinelHubWMS = L.tileLayer.wms('https://services.sentinel-hub.com/ogc/wms/' + instanceID, {
+        var sentinelHubWMS = L.tileLayer.wms(WEBGIS_API_BASE + '/ndvi', {
             layers: 'NDVI',
             format: 'image/png',
             transparent: true,
             version: '1.3.0',
+            crs: L.CRS.EPSG3857,
+            crossOrigin: 'anonymous',
             TIME: calcularIntervaloData(dataLocalHoje()),
-            evalscript: evalscriptCustomizado,
             maxZoom: 18,
-            attribution: '&copy; Sentinel Hub'
+            attribution: '&copy; Copernicus Sentinel-2'
         }).addTo(map);
 
         // ============================================================
