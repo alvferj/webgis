@@ -318,6 +318,7 @@ function evaluatePixel(sample) {
         };
         etiquetasComparacao.addTo(map);
         var etiquetasComparacaoEl = document.querySelector('.ortofoto-compare-labels');
+        map.getContainer().appendChild(etiquetasComparacaoEl);
         var comparacaoControl = L.control({ position: 'topleft' });
         comparacaoControl.onAdd = function() {
             var container = L.DomUtil.create('div', 'leaflet-bar');
