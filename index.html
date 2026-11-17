@@ -227,23 +227,6 @@
             return [agora.getFullYear(), String(agora.getMonth() + 1).padStart(2, '0'), String(agora.getDate()).padStart(2, '0')].join('-');
         }
 
-        // Rampa contínua RdYlGn. A escala fixa (-1 a 1) mantém comparabilidade entre datas.
-        // Ajuste min/max por cena exige estatísticas de um backend.
-        var evalscriptCustomizado = `//VERSION=3
-function setup() { return { input: [{ bands: ["B04", "B08", "dataMask"] }], output: { id: "default", bands: 4, sampleType: "AUTO" } }; }
-function evaluatePixel(sample) {
-    if (sample.dataMask === 0) return [0, 0, 0, 0];
-    var soma = sample.B08 + sample.B04;
-    if (soma <= 0) return [0, 0, 0, 0];
-    var ndvi = Math.max(-1, Math.min(1, (sample.B08 - sample.B04) / soma));
-    var stops = [[165,0,38],[244,109,67],[255,255,191],[166,217,106],[0,104,55]];
-    var pos = ((ndvi + 1) / 2) * (stops.length - 1);
-    var idx = Math.min(Math.floor(pos), stops.length - 2);
-    var t = pos - idx;
-    var cor = [0,1,2].map(function(i) { return (stops[idx][i] * (1-t) + stops[idx+1][i] * t) / 255; });
-    return [cor[0], cor[1], cor[2], 0.9];
-}`;
-
         // Formata e garante o intervalo YYYY-MM-DD/YYYY-MM-DD
         function calcularIntervaloData(dateString) {
             var dataFim = new Date(dateString);
@@ -260,17 +243,17 @@ function evaluatePixel(sample) {
             return formatar(dataInicio) + '/' + formatar(dataFim);
         }
 
-        var instanceID = '59a3204c-90c8-4420-8613-6a8093b1675c';
-        
-        var sentinelHubWMS = L.tileLayer.wms('https://services.sentinel-hub.com/ogc/wms/' + instanceID, {
+        // O Worker gera o mosaico NDVI via Process API e aplica o recorte dos polígonos.
+        // A instância WMS antiga estava inválida e não deve ser chamada pelo navegador.
+        var sentinelHubWMS = L.tileLayer.wms(WEBGIS_API_BASE.replace(/\/+$/, '') + '/ndvi', {
             layers: 'NDVI',
             format: 'image/png',
             transparent: true,
-            version: '1.3.0',
+            version: '1.1.1',
+            srs: 'EPSG:3857',
             TIME: calcularIntervaloData(dataLocalHoje()),
-            evalscript: evalscriptCustomizado,
             maxZoom: 18,
-            attribution: '&copy; Sentinel Hub'
+            attribution: '&copy; Copernicus Sentinel-2'
         }).addTo(map);
 
         // Ortofotos submétricas de 2023–2024 e série histórica EMPLASA 2010–2011.
