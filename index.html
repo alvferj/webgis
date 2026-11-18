@@ -82,6 +82,15 @@
         .insight-card details { margin-top: 9px; border-top: 1px solid #e7ecee; padding-top: 8px; }
         .insight-card summary { cursor: pointer; color: #466052; font-size: 11px; font-weight: 600; }
         .insight-card details p { margin-bottom: 0; color: #65747c; font-size: 11px; }
+        .temporal-period {
+            display: grid; grid-template-columns: auto 1fr auto 1fr; align-items: center; gap: 6px;
+            margin: 8px 0 12px; color: #52616a; font-size: 11px;
+        }
+        .temporal-period input {
+            min-width: 0; width: 100%; box-sizing: border-box; border: 1px solid #cbd5d9;
+            border-radius: 4px; padding: 6px; color: #34434c; font: inherit;
+        }
+        .temporal-period button { grid-column: 1 / -1; justify-self: start; }
         h3 { 
             color: #2c3e50; 
             border-bottom: 2px solid #3498db; 
@@ -197,6 +206,13 @@
                 <canvas id="chartTemporal"></canvas>
                 <p id="temporalStatus" role="status" aria-live="polite" style="font-size:11px;color:#666;margin:6px 0 0;">Selecione um polígono para consultar o histórico.</p>
             </div>
+            <div class="temporal-period" aria-label="Período da análise temporal">
+                <label for="periodFrom">De</label>
+                <input id="periodFrom" type="month" aria-label="Mês inicial">
+                <label for="periodTo">Até</label>
+                <input id="periodTo" type="month" aria-label="Mês final">
+                <button id="applyPeriodButton" type="button" disabled>Atualizar período</button>
+            </div>
             <section class="insight-card" aria-labelledby="areaInsightTitle">
                 <div class="insight-kicker">LEITURA BASEADA EM REGRAS</div>
                 <h4 id="areaInsightTitle">Assistente de leitura</h4>
@@ -205,7 +221,7 @@
                 <div id="areaInsight" class="insight-result" role="status" aria-live="polite">Selecione um polígono de área no mapa e aguarde a série temporal.</div>
                 <details>
                     <summary>Como esta leitura é calculada</summary>
-                    <p>Usa as médias mensais NDVI e NDWI retornadas pelo Sentinel-2. A comparação do NDVI considera as duas observações válidas mais recentes: variação absoluta menor que 0,10 é descrita como pequena; a partir de 0,10, como aumento ou redução. Não são gerados alertas automáticos.</p>
+                    <p>Usa as médias mensais NDVI e NDWI retornadas pelo Sentinel-2 para o polígono selecionado e o período escolhido. A comparação do NDVI considera as duas observações válidas mais recentes: variação absoluta menor que 0,10 é descrita como pequena; a partir de 0,10, como aumento ou redução. Não são gerados alertas automáticos.</p>
                 </details>
             </section>
             <p style="font-size: 11px; color: #666; margin-top: -10px; margin-bottom: 20px;">
@@ -241,6 +257,7 @@
         var NDVI_SERIES_ENDPOINT = WEBGIS_API_BASE ? WEBGIS_API_BASE.replace(/\/+$/, '') + '/timeseries' : '';
         var areaInsightRequestId = 0;
         var areaInsightContext = { name: '', observations: null, period: null };
+        var selectedInsightFeature = null;
 
         // ============================================================
         // 2. MAPA E BASEMAPS
@@ -699,6 +716,15 @@
             return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(date);
         }
 
+        function definirPeriodoPadrao() {
+            var end = new Date();
+            var start = new Date(Date.UTC(end.getUTCFullYear() - 2, end.getUTCMonth(), 1));
+            var toMonth = end.getUTCFullYear() + '-' + String(end.getUTCMonth() + 1).padStart(2, '0');
+            var fromMonth = start.getUTCFullYear() + '-' + String(start.getUTCMonth() + 1).padStart(2, '0');
+            document.getElementById('periodFrom').value = fromMonth;
+            document.getElementById('periodTo').value = toMonth;
+        }
+
         function adicionarLinhaInsight(container, label, detail) {
             var paragraph = document.createElement('p');
             var strong = document.createElement('strong');
@@ -772,6 +798,8 @@
             var explainButton = document.getElementById('explainAreaButton');
             var insight = document.getElementById('areaInsight');
             if (explainButton) explainButton.disabled = true;
+            var periodButton = document.getElementById('applyPeriodButton');
+            if (periodButton) periodButton.disabled = !feature || !feature.geometry;
             if (insight) insight.textContent = feature && feature.geometry ? 'Buscando observações para preparar a leitura…' : 'Selecione um polígono de área no mapa e aguarde a série temporal.';
             if (satvegChart) satvegChart.destroy();
             satvegChart = new Chart(ctx, {
@@ -802,7 +830,11 @@
             try {
                 var response = await fetch(NDVI_SERIES_ENDPOINT, {
                     method:'POST', headers:{'Content-Type':'application/json'},
-                    body:JSON.stringify({areaId:feature.id || (feature.properties && feature.properties.FID) || null})
+                    body:JSON.stringify({
+                        areaId:feature.id || (feature.properties && feature.properties.FID) || null,
+                        from:document.getElementById('periodFrom').value,
+                        to:document.getElementById('periodTo').value
+                    })
                 });
                 if (!response.ok) throw new Error('HTTP '+response.status);
                 var result = await response.json();
@@ -830,10 +862,28 @@
             }
         }
         document.getElementById('explainAreaButton').addEventListener('click', renderResumoArea);
+        document.getElementById('applyPeriodButton').addEventListener('click', function() {
+            var from = document.getElementById('periodFrom').value;
+            var to = document.getElementById('periodTo').value;
+            if (!from || !to || from > to) {
+                document.getElementById('temporalStatus').textContent = 'Informe um período válido: o mês inicial deve ser anterior ou igual ao mês final.';
+                return;
+            }
+            var fromParts = from.split('-').map(Number);
+            var toParts = to.split('-').map(Number);
+            var monthSpan = (toParts[0] - fromParts[0]) * 12 + toParts[1] - fromParts[1];
+            if (monthSpan > 59) {
+                document.getElementById('temporalStatus').textContent = 'Escolha um intervalo de no máximo 60 meses.';
+                return;
+            }
+            if (selectedInsightFeature) gerarGraficoSatveg(areaInsightContext.name || 'Área selecionada', selectedInsightFeature);
+        });
+        definirPeriodoPadrao();
         gerarGraficoSatveg('Aguardando seleção de área...');
         function onAreaClick(feature, layer) {
             layer.on('click', function(e) {
                 var nome = (feature.properties && (feature.properties.nome || feature.properties.NM_MUN)) ? (feature.properties.nome || feature.properties.NM_MUN) : "Área Selecionada";
+                selectedInsightFeature = feature;
                 gerarGraficoSatveg(nome, feature);
                 L.DomEvent.stopPropagation(e);
             });
