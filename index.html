@@ -57,6 +57,31 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
             box-sizing: border-box;
         }
+        .insight-card {
+            background: #fff;
+            border: 1px solid #d6e0e4;
+            border-left: 4px solid #238b57;
+            border-radius: 7px;
+            padding: 12px;
+            margin: 8px 0 18px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            color: #34434c;
+            font-size: 13px;
+        }
+        .insight-card h4 { margin: 0; color: #234333; font-size: 15px; }
+        .insight-card .insight-kicker { color: #557366; font-size: 10px; font-weight: 700; letter-spacing: .06em; }
+        .insight-card .insight-intro { margin: 6px 0 10px; color: #65747c; font-size: 11px; }
+        .insight-card button {
+            border: 0; border-radius: 5px; padding: 8px 11px; background: #237a4b;
+            color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+        }
+        .insight-card button:disabled { background: #9aa9a1; cursor: not-allowed; }
+        .insight-result { margin-top: 10px; line-height: 1.45; }
+        .insight-result p { margin: 7px 0; }
+        .insight-result .insight-area-name { color: #234333; font-size: 14px; font-weight: 700; }
+        .insight-card details { margin-top: 9px; border-top: 1px solid #e7ecee; padding-top: 8px; }
+        .insight-card summary { cursor: pointer; color: #466052; font-size: 11px; font-weight: 600; }
+        .insight-card details p { margin-bottom: 0; color: #65747c; font-size: 11px; }
         h3 { 
             color: #2c3e50; 
             border-bottom: 2px solid #3498db; 
@@ -172,6 +197,17 @@
                 <canvas id="chartTemporal"></canvas>
                 <p id="temporalStatus" role="status" aria-live="polite" style="font-size:11px;color:#666;margin:6px 0 0;">Selecione um polígono para consultar o histórico.</p>
             </div>
+            <section class="insight-card" aria-labelledby="areaInsightTitle">
+                <div class="insight-kicker">LEITURA BASEADA EM REGRAS</div>
+                <h4 id="areaInsightTitle">Assistente de leitura</h4>
+                <p class="insight-intro">Resumo descritivo dos índices observados; não é diagnóstico nem alerta agronômico.</p>
+                <button id="explainAreaButton" type="button" disabled>Explicar dados desta área</button>
+                <div id="areaInsight" class="insight-result" role="status" aria-live="polite">Selecione um polígono de área no mapa e aguarde a série temporal.</div>
+                <details>
+                    <summary>Como esta leitura é calculada</summary>
+                    <p>Usa as médias mensais NDVI e NDWI retornadas pelo Sentinel-2. A comparação do NDVI considera as duas observações válidas mais recentes: variação absoluta menor que 0,10 é descrita como pequena; a partir de 0,10, como aumento ou redução. Não são gerados alertas automáticos.</p>
+                </details>
+            </section>
             <p style="font-size: 11px; color: #666; margin-top: -10px; margin-bottom: 20px;">
                 Clique em um Polígono de Área no mapa para gerar a série temporal de NDVI.
             </p>
@@ -203,6 +239,8 @@
         // Não incluir credenciais no HTML público.
         var WEBGIS_API_BASE = 'https://webgis-sentinel-api.webgis-sentinel-api.workers.dev';
         var NDVI_SERIES_ENDPOINT = WEBGIS_API_BASE ? WEBGIS_API_BASE.replace(/\/+$/, '') + '/timeseries' : '';
+        var areaInsightRequestId = 0;
+        var areaInsightContext = { name: '', observations: null, period: null };
 
         // ============================================================
         // 2. MAPA E BASEMAPS
@@ -645,10 +683,96 @@
         // ============================================================
         // 10. GRÁFICO TEMPORAL
         // ============================================================
+        function valorIndiceValido(observation, field) {
+            var raw = observation && observation[field];
+            if (raw === null || raw === undefined || raw === '') return null;
+            var value = Number(raw);
+            return Number.isFinite(value) ? value : null;
+        }
+
+        function formatarIndice(value) {
+            return value.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+        }
+
+        function formatarDataIndice(value) {
+            var date = new Date(String(value) + 'T00:00:00Z');
+            return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(date);
+        }
+
+        function adicionarLinhaInsight(container, label, detail) {
+            var paragraph = document.createElement('p');
+            var strong = document.createElement('strong');
+            strong.textContent = label + ': ';
+            paragraph.appendChild(strong);
+            paragraph.appendChild(document.createTextNode(detail));
+            container.appendChild(paragraph);
+        }
+
+        function renderResumoArea() {
+            var container = document.getElementById('areaInsight');
+            var context = areaInsightContext;
+            if (!container || !context.observations) return;
+
+            while (container.firstChild) container.removeChild(container.firstChild);
+            var validNdvi = context.observations.filter(function(item) {
+                return valorIndiceValido(item, 'ndvi') !== null && item.date;
+            });
+            if (!validNdvi.length) {
+                container.textContent = 'A série não trouxe médias de NDVI válidas para esta área e período.';
+                return;
+            }
+
+            var latest = validNdvi[validNdvi.length - 1];
+            var latestNdvi = valorIndiceValido(latest, 'ndvi');
+            var previous = validNdvi.length > 1 ? validNdvi[validNdvi.length - 2] : null;
+            var lead = document.createElement('p');
+            lead.className = 'insight-area-name';
+            lead.textContent = context.name || 'Área selecionada';
+            container.appendChild(lead);
+
+            var ndviInterpretation = latestNdvi > 0
+                ? 'valor positivo, com resposta do infravermelho próximo acima da banda vermelha; esse padrão costuma ocorrer em vegetação, mas não mede sozinho saúde ou produtividade.'
+                : latestNdvi < 0
+                    ? 'valor negativo; pode ocorrer em água, solo exposto ou outras superfícies sem vegetação densa. O índice isolado não identifica a causa.'
+                    : 'valor próximo de zero; a resposta espectral isolada não permite caracterizar a cobertura.';
+            adicionarLinhaInsight(container, 'NDVI mais recente (' + formatarDataIndice(latest.date) + ')', formatarIndice(latestNdvi) + ' — ' + ndviInterpretation);
+
+            if (previous) {
+                var previousNdvi = valorIndiceValido(previous, 'ndvi');
+                var delta = latestNdvi - previousNdvi;
+                var variation = Math.abs(delta) < 0.10
+                    ? 'variação pequena (' + (delta >= 0 ? '+' : '') + formatarIndice(delta) + '), entre ' + formatarDataIndice(previous.date) + ' e ' + formatarDataIndice(latest.date) + '.'
+                    : (delta > 0 ? 'aumento de ' : 'redução de ') + formatarIndice(Math.abs(delta)) + ' entre ' + formatarDataIndice(previous.date) + ' e ' + formatarDataIndice(latest.date) + '.';
+                adicionarLinhaInsight(container, 'Comparação', variation);
+            } else {
+                adicionarLinhaInsight(container, 'Comparação', 'há apenas uma observação válida de NDVI, então ainda não é possível descrever uma tendência.');
+            }
+
+            var latestNdwi = valorIndiceValido(latest, 'ndwi');
+            if (latestNdwi !== null) {
+                adicionarLinhaInsight(container, 'NDWI mais recente', formatarIndice(latestNdwi) + ' — índice espectral associado à presença de água em superfície; não é medição direta de umidade do solo.');
+            }
+
+            var validSampleCount = Number(latest.validPixels);
+            var dataLine = 'Médias mensais Sentinel-2';
+            if (context.period && context.period.from && context.period.to) {
+                dataLine += ' no período de ' + formatarDataIndice(context.period.from.slice(0, 10)) + ' a ' + formatarDataIndice(context.period.to.slice(0, 10));
+            }
+            dataLine += '; ' + validNdvi.length + ' observações com NDVI válido.';
+            if (Number.isFinite(validSampleCount)) dataLine += ' Amostras válidas na observação mais recente: ' + validSampleCount.toLocaleString('pt-BR') + '.';
+            adicionarLinhaInsight(container, 'Fonte e cobertura', dataLine);
+        }
+
         async function gerarGraficoSatveg(nome, feature) {
             var ctx = document.getElementById('chartTemporal');
             var status = document.getElementById('temporalStatus');
             if (!ctx) return;
+            var requestId = ++areaInsightRequestId;
+            areaInsightContext = { name: nome || 'Área selecionada', observations: null, period: null };
+            var explainButton = document.getElementById('explainAreaButton');
+            var insight = document.getElementById('areaInsight');
+            if (explainButton) explainButton.disabled = true;
+            if (insight) insight.textContent = feature && feature.geometry ? 'Buscando observações para preparar a leitura…' : 'Selecione um polígono de área no mapa e aguarde a série temporal.';
             if (satvegChart) satvegChart.destroy();
             satvegChart = new Chart(ctx, {
                 type: 'line',
@@ -667,6 +791,7 @@
             });
             if (!NDVI_SERIES_ENDPOINT) {
                 status.textContent = 'Histórico real ainda não conectado. Configure um backend de estatísticas Sentinel-2; nenhum valor simulado é exibido.';
+                if (insight) insight.textContent = 'A série temporal não está conectada; não há dados para explicar.';
                 return;
             }
             if (!feature || !feature.geometry) {
@@ -682,18 +807,29 @@
                 if (!response.ok) throw new Error('HTTP '+response.status);
                 var result = await response.json();
                 var observations = Array.isArray(result.observations) ? result.observations : [];
-                if (!observations.length) { status.textContent='A fonte conectada não retornou observações válidas para esta área.'; return; }
+                if (requestId !== areaInsightRequestId) return;
+                if (!observations.length) {
+                    status.textContent='A fonte conectada não retornou observações válidas para esta área.';
+                    if (insight) insight.textContent = 'A fonte não retornou observações para esta área e período.';
+                    return;
+                }
                 observations.sort(function(a,b){return String(a.date).localeCompare(String(b.date));});
+                areaInsightContext = { name: nome || 'Área selecionada', observations: observations, period: result.period || null };
                 satvegChart.data.labels = observations.map(function(o){return o.date;});
-                satvegChart.data.datasets[0].data = observations.map(function(o){return Number.isFinite(Number(o.ndvi)) ? Number(o.ndvi) : null;});
-                satvegChart.data.datasets[1].data = observations.map(function(o){return Number.isFinite(Number(o.ndwi)) ? Number(o.ndwi) : null;});
+                satvegChart.data.datasets[0].data = observations.map(function(o){return valorIndiceValido(o, 'ndvi');});
+                satvegChart.data.datasets[1].data = observations.map(function(o){return valorIndiceValido(o, 'ndwi');});
                 satvegChart.update();
                 status.textContent = observations.length+' observações recebidas da fonte configurada.';
+                if (explainButton) explainButton.disabled = false;
+                if (insight) insight.textContent = 'Dados carregados. Clique em “Explicar dados desta área” para ver a interpretação e as regras usadas.';
             } catch (error) {
+                if (requestId !== areaInsightRequestId) return;
                 console.error('Falha ao consultar a série temporal:',error);
                 status.textContent='Não foi possível consultar o histórico. Verifique a conexão com o backend de estatísticas.';
+                if (insight) insight.textContent = 'Não foi possível consultar os dados. Nenhuma interpretação foi gerada.';
             }
         }
+        document.getElementById('explainAreaButton').addEventListener('click', renderResumoArea);
         gerarGraficoSatveg('Aguardando seleção de área...');
         function onAreaClick(feature, layer) {
             layer.on('click', function(e) {
