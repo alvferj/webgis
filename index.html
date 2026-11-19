@@ -91,6 +91,7 @@
             border-radius: 4px; padding: 6px; color: #34434c; font: inherit;
         }
         .temporal-period button { grid-column: 1 / -1; justify-self: start; }
+        .temporal-period small { grid-column: 1 / -1; color: #65747c; line-height: 1.35; }
         h3 { 
             color: #2c3e50; 
             border-bottom: 2px solid #3498db; 
@@ -212,6 +213,7 @@
                 <label for="periodTo">Até</label>
                 <input id="periodTo" type="month" aria-label="Mês final">
                 <button id="applyPeriodButton" type="button" disabled>Atualizar período</button>
+                <small>Período inicial: últimos 6 meses. Você pode escolher de 1 a 60 meses.</small>
             </div>
             <section class="insight-card" aria-labelledby="areaInsightTitle">
                 <div class="insight-kicker">LEITURA BASEADA EM REGRAS</div>
@@ -718,7 +720,7 @@
 
         function definirPeriodoPadrao() {
             var end = new Date();
-            var start = new Date(Date.UTC(end.getUTCFullYear() - 2, end.getUTCMonth(), 1));
+            var start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 5, 1));
             var toMonth = end.getUTCFullYear() + '-' + String(end.getUTCMonth() + 1).padStart(2, '0');
             var fromMonth = start.getUTCFullYear() + '-' + String(start.getUTCMonth() + 1).padStart(2, '0');
             document.getElementById('periodFrom').value = fromMonth;
