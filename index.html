@@ -79,6 +79,16 @@
         .insight-result { margin-top: 10px; line-height: 1.45; }
         .insight-result p { margin: 7px 0; }
         .insight-result .insight-area-name { color: #234333; font-size: 14px; font-weight: 700; }
+        .monitor-status {
+            display: grid; gap: 4px; margin: 10px 0; padding: 10px 11px; border: 1px solid #d6e0e4;
+            border-left: 4px solid #718096; border-radius: 5px; background: #f7f9fa;
+        }
+        .monitor-status strong { color: #34434c; font-size: 13px; }
+        .monitor-status span { color: #52616a; font-size: 11px; line-height: 1.4; }
+        .monitor-status--attention { border-left-color: #c0392b; background: #fff4f2; }
+        .monitor-status--review { border-left-color: #d28a16; background: #fff9eb; }
+        .monitor-status--positive { border-left-color: #238b57; background: #f1faf5; }
+        .monitor-status--stable, .monitor-status--insufficient { border-left-color: #718096; background: #f7f9fa; }
         .insight-card details { margin-top: 9px; border-top: 1px solid #e7ecee; padding-top: 8px; }
         .insight-card summary { cursor: pointer; color: #466052; font-size: 11px; font-weight: 600; }
         .insight-card details p { margin-bottom: 0; color: #65747c; font-size: 11px; }
@@ -216,14 +226,14 @@
                 <small>Período inicial: últimos 6 meses. Você pode escolher de 1 a 60 meses.</small>
             </div>
             <section class="insight-card" aria-labelledby="areaInsightTitle">
-                <div class="insight-kicker">LEITURA BASEADA EM REGRAS</div>
-                <h4 id="areaInsightTitle">Assistente de leitura</h4>
-                <p class="insight-intro">Resumo descritivo dos índices observados; não é diagnóstico nem alerta agronômico.</p>
-                <button id="explainAreaButton" type="button" disabled>Explicar dados desta área</button>
+                <div class="insight-kicker">MONITORAMENTO POR REGRAS · NDVI</div>
+                <h4 id="areaInsightTitle">Sinais para verificar</h4>
+                <p class="insight-intro">Analisa a área selecionada e mostra evidências para apoiar a inspeção; não identifica a causa nem substitui avaliação de campo.</p>
+                <button id="explainAreaButton" type="button" disabled>Verificar sinais desta área</button>
                 <div id="areaInsight" class="insight-result" role="status" aria-live="polite">Selecione um polígono de área no mapa e aguarde a série temporal.</div>
                 <details>
-                    <summary>Como esta leitura é calculada</summary>
-                    <p>Usa as médias mensais NDVI e NDWI retornadas pelo Sentinel-2 para o polígono selecionado e o período escolhido. A comparação do NDVI considera as duas observações válidas mais recentes: variação absoluta menor que 0,10 é descrita como pequena; a partir de 0,10, como aumento ou redução. Não são gerados alertas automáticos.</p>
+                    <summary>Regras e limites</summary>
+                    <p>Compara as duas observações mensais válidas mais recentes do NDVI no período escolhido. Uma queda de 0,10 ou mais gera um sinal para verificar; uma diferença menor que 0,10 é descrita como pequena. Se houver mais de dois meses entre as observações, o painel pede revisar a cobertura e não classifica a tendência. São exibidos datas, valores e amostras válidas. Esses sinais não são diagnóstico de saúde ou produtividade.</p>
                 </details>
             </section>
             <p style="font-size: 11px; color: #666; margin-top: -10px; margin-bottom: 20px;">
@@ -736,6 +746,25 @@
             container.appendChild(paragraph);
         }
 
+        function adicionarStatusMonitoramento(container, tipo, titulo, detalhe) {
+            var box = document.createElement('div');
+            box.className = 'monitor-status monitor-status--' + tipo;
+            var heading = document.createElement('strong');
+            heading.textContent = titulo;
+            var description = document.createElement('span');
+            description.textContent = detalhe;
+            box.appendChild(heading);
+            box.appendChild(description);
+            container.appendChild(box);
+        }
+
+        function mesesEntreObservacoes(maisAntiga, maisRecente) {
+            var from = new Date(String(maisAntiga) + 'T00:00:00Z');
+            var to = new Date(String(maisRecente) + 'T00:00:00Z');
+            if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null;
+            return (to.getUTCFullYear() - from.getUTCFullYear()) * 12 + to.getUTCMonth() - from.getUTCMonth();
+        }
+
         function renderResumoArea() {
             var container = document.getElementById('areaInsight');
             var context = areaInsightContext;
@@ -744,9 +773,9 @@
             while (container.firstChild) container.removeChild(container.firstChild);
             var validNdvi = context.observations.filter(function(item) {
                 return valorIndiceValido(item, 'ndvi') !== null && item.date;
-            });
+            }).sort(function(a, b) { return String(a.date).localeCompare(String(b.date)); });
             if (!validNdvi.length) {
-                container.textContent = 'A série não trouxe médias de NDVI válidas para esta área e período.';
+                adicionarStatusMonitoramento(container, 'insufficient', 'Sem dados válidos', 'A série não trouxe médias de NDVI válidas para esta área e período.');
                 return;
             }
 
@@ -757,6 +786,23 @@
             lead.className = 'insight-area-name';
             lead.textContent = context.name || 'Área selecionada';
             container.appendChild(lead);
+
+            if (!previous) {
+                adicionarStatusMonitoramento(container, 'insufficient', 'Dados insuficientes para comparar', 'Há apenas uma observação válida de NDVI no período. Selecione um intervalo maior ou aguarde novas imagens.');
+            } else {
+                var previousNdvi = valorIndiceValido(previous, 'ndvi');
+                var delta = latestNdvi - previousNdvi;
+                var gapMonths = mesesEntreObservacoes(previous.date, latest.date);
+                if (gapMonths === null || gapMonths > 2) {
+                    adicionarStatusMonitoramento(container, 'review', 'Revisar cobertura de imagens', 'As duas observações válidas mais recentes estão separadas por ' + (gapMonths === null ? 'um intervalo de datas inválido' : gapMonths + ' meses') + '. O painel não classifica a variação como tendência.');
+                } else if (delta <= -0.10) {
+                    adicionarStatusMonitoramento(container, 'attention', 'Queda observada · verificar área', 'O NDVI caiu ' + formatarIndice(Math.abs(delta)) + ' entre ' + formatarDataIndice(previous.date) + ' (' + formatarIndice(previousNdvi) + ') e ' + formatarDataIndice(latest.date) + ' (' + formatarIndice(latestNdvi) + '). Confira a imagem e considere inspeção de campo; o índice não identifica a causa.');
+                } else if (delta >= 0.10) {
+                    adicionarStatusMonitoramento(container, 'positive', 'Aumento observado', 'O NDVI subiu ' + formatarIndice(delta) + ' entre ' + formatarDataIndice(previous.date) + ' e ' + formatarDataIndice(latest.date) + '. A variação espectral, isoladamente, não comprova produtividade ou condição da cultura.');
+                } else {
+                    adicionarStatusMonitoramento(container, 'stable', 'Sem queda relevante na comparação', 'A diferença de NDVI foi ' + formatarIndice(Math.abs(delta)) + ', abaixo do limite de 0,100, entre ' + formatarDataIndice(previous.date) + ' e ' + formatarDataIndice(latest.date) + '.');
+                }
+            }
 
             var ndviInterpretation = latestNdvi > 0
                 ? 'valor positivo, com resposta do infravermelho próximo acima da banda vermelha; esse padrão costuma ocorrer em vegetação, mas não mede sozinho saúde ou produtividade.'
