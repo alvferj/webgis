@@ -89,6 +89,10 @@
         .monitor-status--review { border-left-color: #d28a16; background: #fff9eb; }
         .monitor-status--positive { border-left-color: #238b57; background: #f1faf5; }
         .monitor-status--stable, .monitor-status--insufficient { border-left-color: #718096; background: #f7f9fa; }
+        .consulta-webgis { margin-top: 10px; padding-top: 9px; border-top: 1px solid #e7ecee; }
+        .consulta-webgis label, .consulta-webgis p { display: block; margin: 6px 0; color: #65747c; font-size: 11px; line-height: 1.4; }
+        .consulta-webgis input { width: 100%; box-sizing: border-box; margin: 3px 0 7px; border: 1px solid #cbd5d9; border-radius: 4px; padding: 8px; color: #34434c; font: inherit; }
+        .consulta-webgis-result { margin-top: 7px; padding: 9px; border-radius: 5px; background: #f3f6fb; color: #34434c; font-size: 12px; line-height: 1.45; }
         .insight-card details { margin-top: 9px; border-top: 1px solid #e7ecee; padding-top: 8px; }
         .insight-card summary { cursor: pointer; color: #466052; font-size: 11px; font-weight: 600; }
         .insight-card details p { margin-bottom: 0; color: #65747c; font-size: 11px; }
@@ -231,9 +235,17 @@
                 <p class="insight-intro">Analisa a área selecionada e mostra evidências para apoiar a inspeção; não identifica a causa nem substitui avaliação de campo.</p>
                 <button id="explainAreaButton" type="button" disabled>Verificar sinais desta área</button>
                 <div id="areaInsight" class="insight-result" role="status" aria-live="polite">Selecione um polígono de área no mapa e aguarde a série temporal.</div>
+                <div class="consulta-webgis" aria-labelledby="consultaWebgisTitle">
+                    <h4 id="consultaWebgisTitle">Pergunte sobre esta área</h4>
+                    <label for="consultaWebgisInput">Consulta gratuita baseada nas regras e nos dados já carregados:</label>
+                    <input id="consultaWebgisInput" type="text" maxlength="180" placeholder="Ex.: o NDVI caiu? Qual foi o valor mais recente?">
+                    <button id="consultaWebgisButton" type="button" disabled>Consultar WebGIS</button>
+                    <p>Funciona no navegador, sem IA externa, sem envio adicional de dados e sem custo de modelo. A resposta cobre a área selecionada; para comparar outras, selecione cada polígono.</p>
+                    <div id="consultaWebgisResult" class="consulta-webgis-result" role="status" aria-live="polite" hidden></div>
+                </div>
                 <details>
                     <summary>Regras e limites</summary>
-                    <p>Compara as duas observações mensais válidas mais recentes do NDVI no período escolhido. Uma queda de 0,10 ou mais gera um sinal para verificar; uma diferença menor que 0,10 é descrita como pequena. Se houver mais de dois meses entre as observações, o painel pede revisar a cobertura e não classifica a tendência. São exibidos datas, valores e amostras válidas. Esses sinais não são diagnóstico de saúde ou produtividade.</p>
+                    <p>Compara as duas observações mensais válidas mais recentes do NDVI no período escolhido. Uma queda de 0,10 ou mais gera um sinal para verificar; uma diferença menor que 0,10 é descrita como pequena. Se houver mais de dois meses entre as observações, o painel pede revisar a cobertura e não classifica a tendência. Também calcula a média dos valores mensais válidos nos seis meses até o fim do período selecionado; meses sem dados não são estimados. Esses sinais não são diagnóstico de saúde ou produtividade.</p>
                 </details>
             </section>
             <p style="font-size: 11px; color: #666; margin-top: -10px; margin-bottom: 20px;">
@@ -765,6 +777,33 @@
             return (to.getUTCFullYear() - from.getUTCFullYear()) * 12 + to.getUTCMonth() - from.getUTCMonth();
         }
 
+        function mediaNdviUltimosSeisMeses(observations, period) {
+            var endMonth = period && period.to ? String(period.to).slice(0, 7) : document.getElementById('periodTo').value;
+            if (!/^\d{4}-\d{2}$/.test(endMonth)) return null;
+            var endParts = endMonth.split('-').map(Number);
+            var startDate = new Date(Date.UTC(endParts[0], endParts[1] - 6, 1));
+            var startMonth = startDate.getUTCFullYear() + '-' + String(startDate.getUTCMonth() + 1).padStart(2, '0');
+            var monthlyValues = {};
+            observations.forEach(function(item) {
+                var month = String(item.date).slice(0, 7);
+                var ndvi = valorIndiceValido(item, 'ndvi');
+                if (/^\d{4}-\d{2}$/.test(month) && month >= startMonth && month <= endMonth && ndvi !== null) {
+                    if (!monthlyValues[month]) monthlyValues[month] = [];
+                    monthlyValues[month].push(ndvi);
+                }
+            });
+            var monthMeans = Object.keys(monthlyValues).sort().map(function(month) {
+                return monthlyValues[month].reduce(function(sum, value) { return sum + value; }, 0) / monthlyValues[month].length;
+            });
+            if (!monthMeans.length) return { value: null, months: 0, from: startMonth, to: endMonth };
+            return {
+                value: monthMeans.reduce(function(sum, value) { return sum + value; }, 0) / monthMeans.length,
+                months: monthMeans.length,
+                from: startMonth,
+                to: endMonth
+            };
+        }
+
         function renderResumoArea() {
             var container = document.getElementById('areaInsight');
             var context = areaInsightContext;
@@ -782,6 +821,7 @@
             var latest = validNdvi[validNdvi.length - 1];
             var latestNdvi = valorIndiceValido(latest, 'ndvi');
             var previous = validNdvi.length > 1 ? validNdvi[validNdvi.length - 2] : null;
+            var sixMonthMean = mediaNdviUltimosSeisMeses(validNdvi, context.period);
             var lead = document.createElement('p');
             lead.className = 'insight-area-name';
             lead.textContent = context.name || 'Área selecionada';
@@ -811,6 +851,12 @@
                     : 'valor próximo de zero; a resposta espectral isolada não permite caracterizar a cobertura.';
             adicionarLinhaInsight(container, 'NDVI mais recente (' + formatarDataIndice(latest.date) + ')', formatarIndice(latestNdvi) + ' — ' + ndviInterpretation);
 
+            if (sixMonthMean && sixMonthMean.value !== null) {
+                adicionarLinhaInsight(container, 'Média NDVI dos últimos 6 meses', formatarIndice(sixMonthMean.value) + ', calculada com ' + sixMonthMean.months + ' mês(es) com observação válida, de ' + formatarDataIndice(sixMonthMean.from + '-01') + ' a ' + formatarDataIndice(sixMonthMean.to + '-01') + '. Meses sem dados não foram estimados.');
+            } else {
+                adicionarLinhaInsight(container, 'Média NDVI dos últimos 6 meses', 'não há observações válidas no intervalo de ' + (sixMonthMean ? sixMonthMean.from : 'seis meses') + ' a ' + (sixMonthMean ? sixMonthMean.to : 'selecionado') + '.');
+            }
+
             if (previous) {
                 var previousNdvi = valorIndiceValido(previous, 'ndvi');
                 var delta = latestNdvi - previousNdvi;
@@ -837,6 +883,63 @@
             adicionarLinhaInsight(container, 'Fonte e cobertura', dataLine);
         }
 
+        function responderConsultaWebgis() {
+            var question = document.getElementById('consultaWebgisInput').value.trim().toLocaleLowerCase('pt-BR');
+            var output = document.getElementById('consultaWebgisResult');
+            var observations = areaInsightContext && Array.isArray(areaInsightContext.observations)
+                ? areaInsightContext.observations.filter(function(item) { return item && item.date && valorIndiceValido(item, 'ndvi') !== null; }).sort(function(a, b) { return String(a.date).localeCompare(String(b.date)); })
+                : [];
+            output.hidden = false;
+            if (!question) { output.textContent = 'Digite uma pergunta sobre a área selecionada.'; return; }
+            if (!observations.length) { output.textContent = 'Ainda não há observações NDVI carregadas para a área selecionada.'; return; }
+            if (/quais areas|todas as areas|outras areas|comparar areas/.test(question.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) {
+                output.textContent = 'Esta consulta usa os dados já carregados para “' + areaInsightContext.name + '”. Selecione outro polígono para consultar outra área; o sistema não carrega todas as áreas em segundo plano.';
+                return;
+            }
+            var latest = observations[observations.length - 1];
+            var previous = observations.length > 1 ? observations[observations.length - 2] : null;
+            var latestValue = valorIndiceValido(latest, 'ndvi');
+            var questionPlain = question.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            if (/media|medio|seis meses|6 meses/.test(questionPlain)) {
+                var average = mediaNdviUltimosSeisMeses(observations, areaInsightContext.period);
+                output.textContent = average && average.value !== null
+                    ? 'A média NDVI dos últimos seis meses de “' + areaInsightContext.name + '” é ' + formatarIndice(average.value) + ', calculada com ' + average.months + ' mês(es) que tiveram observação válida. Meses sem dados não foram estimados.'
+                    : 'Não há observações NDVI válidas nos últimos seis meses do período selecionado para esta área.';
+                return;
+            }
+            if (/amostra|pixel|cobertura/.test(questionPlain)) {
+                var samples = Number(latest.validPixels);
+                output.textContent = Number.isFinite(samples)
+                    ? 'Na observação mais recente (' + formatarDataIndice(latest.date) + '), há ' + samples.toLocaleString('pt-BR') + ' amostras válidas. Isso descreve a cobertura dos dados, não a saúde da cultura.'
+                    : 'A quantidade de amostras válidas não foi informada nesta observação.';
+                return;
+            }
+            if (/quantas observacoes|historico|datas|periodo/.test(questionPlain)) {
+                output.textContent = 'A série desta área contém ' + observations.length + ' observação(ões) válida(s), de ' + formatarDataIndice(observations[0].date) + ' a ' + formatarDataIndice(latest.date) + '.';
+                return;
+            }
+            if (/valor|ndvi|atual|recente/.test(questionPlain) && !/cai|queda|reduz|dimin|baix|pior/.test(questionPlain)) {
+                output.textContent = 'O NDVI mais recente de “' + areaInsightContext.name + '” é ' + formatarIndice(latestValue) + ', em ' + formatarDataIndice(latest.date) + '. O índice sozinho não mede produtividade nem identifica a causa de uma mudança.';
+                return;
+            }
+            if (!previous) {
+                output.textContent = 'Há somente uma observação válida (' + formatarDataIndice(latest.date) + ', NDVI ' + formatarIndice(latestValue) + '); não é possível comparar tendência ainda.';
+                return;
+            }
+            var previousValue = valorIndiceValido(previous, 'ndvi');
+            var delta = latestValue - previousValue;
+            var gap = mesesEntreObservacoes(previous.date, latest.date);
+            if (gap === null || gap > 2) {
+                output.textContent = 'As observações mais recentes estão separadas por ' + (gap === null ? 'datas inválidas' : gap + ' meses') + '. A regra não classifica a tendência com essa lacuna. Últimos valores: ' + formatarIndice(previousValue) + ' e ' + formatarIndice(latestValue) + '.';
+            } else if (delta <= -0.10) {
+                output.textContent = 'Sim, há queda observada: o NDVI reduziu ' + formatarIndice(Math.abs(delta)) + ' entre ' + formatarDataIndice(previous.date) + ' (' + formatarIndice(previousValue) + ') e ' + formatarDataIndice(latest.date) + ' (' + formatarIndice(latestValue) + '). Confira a imagem e, se necessário, faça inspeção de campo; o índice não aponta a causa.';
+            } else if (delta >= 0.10) {
+                output.textContent = 'A comparação mostra aumento de ' + formatarIndice(delta) + ' entre ' + formatarDataIndice(previous.date) + ' e ' + formatarDataIndice(latest.date) + '. Isso não confirma produtividade ou condição da cultura.';
+            } else {
+                output.textContent = 'Não há queda relevante pela regra atual: a variação foi ' + (delta >= 0 ? '+' : '') + formatarIndice(delta) + ' entre ' + formatarDataIndice(previous.date) + ' e ' + formatarDataIndice(latest.date) + ', abaixo do limite de 0,100.';
+            }
+        }
+
         async function gerarGraficoSatveg(nome, feature) {
             var ctx = document.getElementById('chartTemporal');
             var status = document.getElementById('temporalStatus');
@@ -846,6 +949,10 @@
             var explainButton = document.getElementById('explainAreaButton');
             var insight = document.getElementById('areaInsight');
             if (explainButton) explainButton.disabled = true;
+            var consultaButton = document.getElementById('consultaWebgisButton');
+            var consultaOutput = document.getElementById('consultaWebgisResult');
+            if (consultaButton) consultaButton.disabled = true;
+            if (consultaOutput) { consultaOutput.hidden = true; consultaOutput.textContent = ''; }
             var periodButton = document.getElementById('applyPeriodButton');
             if (periodButton) periodButton.disabled = !feature || !feature.geometry;
             if (insight) insight.textContent = feature && feature.geometry ? 'Buscando observações para preparar a leitura…' : 'Selecione um polígono de área no mapa e aguarde a série temporal.';
@@ -901,7 +1008,8 @@
                 satvegChart.update();
                 status.textContent = observations.length+' observações recebidas da fonte configurada.';
                 if (explainButton) explainButton.disabled = false;
-                if (insight) insight.textContent = 'Dados carregados. Clique em “Explicar dados desta área” para ver a interpretação e as regras usadas.';
+                if (insight) insight.textContent = 'Dados carregados. Clique em “Verificar sinais desta área” para ver os cálculos por regras.';
+                if (consultaButton) consultaButton.disabled = false;
             } catch (error) {
                 if (requestId !== areaInsightRequestId) return;
                 console.error('Falha ao consultar a série temporal:',error);
@@ -910,6 +1018,10 @@
             }
         }
         document.getElementById('explainAreaButton').addEventListener('click', renderResumoArea);
+        document.getElementById('consultaWebgisButton').addEventListener('click', responderConsultaWebgis);
+        document.getElementById('consultaWebgisInput').addEventListener('keydown', function(event) {
+            if (event.key === 'Enter') responderConsultaWebgis();
+        });
         document.getElementById('applyPeriodButton').addEventListener('click', function() {
             var from = document.getElementById('periodFrom').value;
             var to = document.getElementById('periodTo').value;
